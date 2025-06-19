@@ -1,0 +1,38 @@
+[project]
+name = "demai-api"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "jdorado",email = "juancamilo.dorado@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+
+[tool.poetry]
+package-mode = false
+
+[tool.poetry.dependencies]
+python = ">=3.11,<3.14"
+fastapi = ">=0.115.12,<0.116.0"
+uvicorn = {extras = ["standard"], version = ">=0.34.2,<0.35.0"}
+langchain = ">=0.3.0,<0.4.0"
+pydantic = ">=2.11.4,<3.0.0"
+langchain-openai = ">=0.3.16,<0.4.0"
+pymongo = ">=4.12.1,<5.0.0"
+web3 = ">=7.11.0,<8.0.0"
+requests = ">=2.31.0,<3.0.0"
+aiohttp = ">=3.8.0,<4.0.0"
+python-dotenv = ">=1.0.0,<2.0.0"
+eth-abi = ">=5.0.0,<6.0.0"
+pancaik = { git = "https://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@github.com/jdorado/pancaik", branch = "v0.2" }
+
+[tool.poetry.group.dev.dependencies]
+# pancaik = { path = "../../../pancake/pancaik", develop = true }
+autoflake = "^2.3.1"
+black = "^25.1.0"
+isort = "^6.0.1"
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
