@@ -35,11 +35,7 @@ app = FastAPI(lifespan=lifespan)
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",  # Actual frontend port
-        "http://localhost:3001",  # Backup port
-        "http://localhost:3010",  # Original expected port
-    ],
+    allow_origins=["*"],  # Allow any origin
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
