@@ -51,6 +51,7 @@ class PortfolioRequest(BaseModel):
     vault_address: str
     wallet_address: str  # Wallet address for authentication
     signature: str
+    refresh: Optional[bool] = False
 
 def verify_signature(message: str, signature: str, address: str) -> bool:
     try:
@@ -107,6 +108,10 @@ async def portfolio_endpoint(request: PortfolioRequest):
         
         # Initialize portfolio service with pancaik database
         portfolio_service = PortfolioService(db)
+        
+        # If refresh is requested, clear cache first
+        if request.refresh:
+            await portfolio_service.clear_portfolio_cache(request.vault_address)
         
         # Get portfolio summary for the vault address
         portfolio_data = await portfolio_service.get_portfolio_summary(request.vault_address)

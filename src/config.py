@@ -57,8 +57,19 @@ SUPPORTED_TOKENS = {
         "decimals": 6,
         "addresses": {
             42161: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",  # Arbitrum (native USDC)
+            1116: "0xa4151B2B3e269645181dCcF2D426cE75fcbDeca9",  # Core
         },
         "coingeckoId": "usd-coin",
+    },
+    "USDT": {
+        "symbol": "USDT",
+        "name": "Tether USD",
+        "decimals": 6,
+        "addresses": {
+            42161: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9",  # Arbitrum
+            1116: "0x900101d06A7426441Ae63e9AB3B9b0F63Be145F1",  # Core
+        },
+        "coingeckoId": "tether",
     },
 }
 
@@ -68,6 +79,11 @@ CHAIN_CONFIG = {
         "name": "Arbitrum",
         "rpc_url": os.getenv("ARBITRUM_RPC_URL", "https://arb1.arbitrum.io/rpc"),
         "native_currency": {"symbol": "ETH", "name": "Ethereum", "decimals": 18, "coingeckoId": "ethereum"}
+    },
+    1116: {
+        "name": "Core",
+        "rpc_url": os.getenv("CORE_RPC_URL", "https://rpc.coredao.org"),
+        "native_currency": {"symbol": "CORE", "name": "Core", "decimals": 18, "coingeckoId": "core"}
     }
 }
 

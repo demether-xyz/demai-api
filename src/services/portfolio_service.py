@@ -64,6 +64,30 @@ class PortfolioService:
             except Exception as e:
                 logger.error(f"Error connecting to chain {chain_id}: {e}")
     
+    async def clear_portfolio_cache(self, vault_address: Optional[str] = None):
+        """Clear all caches (memory and DB) for a specific vault or all vaults."""
+        # Clear memory cache
+        if vault_address:
+            if vault_address in self._memory_cache:
+                del self._memory_cache[vault_address]
+                logger.info(f"Cleared memory cache for vault {vault_address}")
+        else:
+            self._memory_cache.clear()
+            logger.info("Cleared all memory cache")
+
+        # Clear database cache
+        if self.db is not None:
+            cache_collection = self.db.portfolio_cache
+            try:
+                if vault_address:
+                    await cache_collection.delete_one({"vault_address": vault_address})
+                    logger.info(f"Cleared database cache for vault {vault_address}")
+                else:
+                    await cache_collection.delete_many({})
+                    logger.info("Cleared all database cache")
+            except Exception as e:
+                logger.error(f"Error clearing database cache: {e}")
+    
     def clear_memory_cache(self, vault_address: Optional[str] = None):
         """Clear memory cache for a specific vault or all vaults"""
         if vault_address:

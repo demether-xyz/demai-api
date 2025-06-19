@@ -189,14 +189,14 @@ def format_chat_history_structured(chat_history):
 
 
 
-async def run_chatbot(message: str, chat_id: str, available_windows: list = None, vault_address: str = None) -> str:
+async def run_chatbot(message: str, chat_id: str, available_windows: list = None, vault_address: str = None) -> dict:
     """Run chatbot with window opening capabilities using AI router agent mode"""
     try:
         # Get database from pancaik config
         db = get_config("db")
         if db is None:
             logger.error("Database not initialized")
-            return json.dumps({"text": "Sorry, I'm having trouble accessing the database right now."})
+            return {"text": "Sorry, I'm having trouble accessing the database right now."}
         
         # Initialize portfolio service if vault address is provided
         portfolio_llm_data = None
@@ -232,13 +232,13 @@ async def run_chatbot(message: str, chat_id: str, available_windows: list = None
         # Create LangChain tool for supplying tokens to Aave
         supply_to_aave_tool = create_langchain_tool(
             supply_token_to_aave_with_vault,
-            description="Supply a specified amount of a token (e.g., USDC, WBTC) to Aave on a given chain (e.g., Arbitrum). Requires token symbol, amount, and chain name. The vault address is provided by the session. Example: 'supply 100 USDC to Aave on Arbitrum'."
+            description="Supply a specified amount of a token (e.g., USDC, WBTC) to Aave on a given chain (e.g., Arbitrum). Requires token symbol, amount, and chain name. The vault address is provided by the session. Example: 'supply 100 USDC to Aave on Arbitrum'. If a transaction is made, include the transaction hash in the 'text' field."
         )
         
         # Create LangChain tool for withdrawing tokens from Aave
         withdraw_from_aave_tool = create_langchain_tool(
             withdraw_token_from_aave_with_vault,
-            description="Withdraw a specified amount of a token (e.g., USDC, WBTC) from Aave on a given chain (e.g., Arbitrum). Requires token symbol, amount, and chain name. The vault address is provided by the session. Example: 'withdraw 50 USDC from Aave on Arbitrum'."
+            description="Withdraw a specified amount of a token (e.g., USDC, WBTC) from Aave on a given chain (e.g., Arbitrum). Requires token symbol, amount, and chain name. The vault address is provided by the session. Example: 'withdraw 50 USDC from Aave on Arbitrum'. If a transaction is made, include the transaction hash in the 'text' field."
         )
         
         tools_to_use.append(supply_to_aave_tool)
@@ -253,6 +253,7 @@ OUTPUT IN JSON: Strict JSON format, no additional text.
 Available window IDs to open: """ + ", ".join(windows_to_use) + """
 Include "windows" field as an array of window IDs if you want to open specific windows from the available list.
 You can open multiple windows at once to show related information.
+If a transaction is made, include the transaction hash in the "text" field.
 """
 
         # Create structured prompt data
@@ -294,7 +295,8 @@ AVAILABLE TOOLS:
 - supply_token_to_aave: Supply a specified amount of a token (e.g., USDC, WBTC) to Aave on a given chain (e.g., Arbitrum). Requires token symbol, amount, and chain name. The vault address is provided by the session. Example: 'supply 100 USDC to Aave on Arbitrum'
 - withdraw_token_from_aave: Withdraw a specified amount of a token (e.g., USDC, WBTC) from Aave on a given chain (e.g., Arbitrum). Requires token symbol, amount, and chain name. The vault address is provided by the session. Example: 'withdraw 50 USDC from Aave on Arbitrum'
 
-Use the available tools to help answer user questions about DeFi yields when relevant."""
+Use the available tools to help answer user questions about DeFi yields when relevant. If a transaction is made, include the transaction hash in the 'text' field of your response.
+"""
         
         # Use agent mode with tools (following pipedrive_agent pattern)
         response = await get_completion(
@@ -319,14 +321,14 @@ Use the available tools to help answer user questions about DeFi yields when rel
             ai_text = parsed_response.get("text", final_output)
             # Save both user message and AI response in one operation
             await _save_conversation_pair(db, chat_id, message, ai_text)
-            return json.dumps(parsed_response)
+            return parsed_response
         else:
             # Fallback: wrap response in expected JSON format
             # Save both user message and AI response in one operation
             await _save_conversation_pair(db, chat_id, message, final_output)
-            return json.dumps({"text": final_output})
+            return {"text": final_output}
         
     except Exception as e:
         logger.error(f"Error in chatbot: {e}")
         error_response = "Sorry, I'm having trouble processing your request right now."
-        return json.dumps({"text": error_response}) 
+        return {"text": error_response} 

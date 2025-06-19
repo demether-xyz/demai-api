@@ -2448,7 +2448,7 @@ uvicorn = "^0.34.0"
 
 [package.source]
 type = "directory"
-url = "../../../pancake/pancaik"
+url = "../../pancake/pancaik"
 
 [[package]]
 name = "parsimonious"
@@ -4299,4 +4299,4 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.14"
-content-hash = "cb0f306b67d8fa364e4c06ee11d60e20c6a34ad0853e13c58289b028b5449a5c"
+content-hash = "fb2eded04529f4592121b30e735d1a3972a5ea98e88a77b346c866215c429900"
