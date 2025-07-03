@@ -13,14 +13,23 @@ logger = logging.getLogger(__name__)
 
 # Aave V3 strategy contract addresses
 AAVE_STRATEGY_CONTRACTS = {
-    "aave_v3_supply": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",  # Aave V3 Pool on Arbitrum
-    "aave_v3_withdraw": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",  # Same contract, different function
+    42161: {  # Arbitrum
+        "aave_v3_supply": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",  # Aave V3 Pool on Arbitrum
+        "aave_v3_withdraw": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",  # Same contract, different function
+    },
+    1116: { # Core
+        "aave_v3_supply": "0x0CEa9F0F49F30d376390e480ba32f903B43B19C5", # Aave V3 Pool on Core
+        "aave_v3_withdraw": "0x0CEa9F0F49F30d376390e480ba32f903B43B19C5", # Same contract, different function
+    }
 }
 
 # Aave V3 aToken addresses for supported tokens
 AAVE_ATOKENS = {
     42161: {  # Arbitrum
         "USDC": "0x724dc807b04555b71ed48a6896b6F41593b8C637",  # aArbUSDC
+    },
+    1116: { # Core
+        "USDC": "0xa4151B2B3e269645181dCcF2D426cE75fcbDeca9",
     }
 }
 
@@ -208,6 +217,7 @@ def _construct_aave_approvals(strategy_name: str, params: Dict[str, Any]) -> Lis
 
 async def supply_to_aave(
     executor,  # StrategyExecutor instance
+    chain_id: int,
     vault_address: str,
     asset_address: str,
     amount: int,
@@ -218,6 +228,7 @@ async def supply_to_aave(
     
     Args:
         executor: StrategyExecutor instance
+        chain_id: The chain ID
         vault_address: Vault contract address
         asset_address: Token address to supply
         amount: Amount in token's smallest unit (wei)
@@ -236,7 +247,11 @@ async def supply_to_aave(
     # Construct Aave-specific call data and approvals
     call_data = _construct_aave_call_data("aave_v3_supply", params)
     approvals = _construct_aave_approvals("aave_v3_supply", params)
-    target_contract = AAVE_STRATEGY_CONTRACTS["aave_v3_supply"]
+    
+    if chain_id not in AAVE_STRATEGY_CONTRACTS:
+        raise ValueError(f"Aave strategy not supported on chain {chain_id}")
+        
+    target_contract = AAVE_STRATEGY_CONTRACTS[chain_id]["aave_v3_supply"]
     
     return await executor.execute_strategy(
         vault_address=vault_address,
@@ -248,6 +263,7 @@ async def supply_to_aave(
 
 async def withdraw_from_aave(
     executor,  # StrategyExecutor instance
+    chain_id: int,
     vault_address: str,
     asset_address: str,
     amount: int,
@@ -258,6 +274,7 @@ async def withdraw_from_aave(
     
     Args:
         executor: StrategyExecutor instance
+        chain_id: The chain ID
         vault_address: Vault contract address
         asset_address: Token address to withdraw
         amount: Amount in token's smallest unit (wei), or type(uint256).max for full withdrawal
@@ -275,7 +292,11 @@ async def withdraw_from_aave(
     # Construct Aave-specific call data and approvals
     call_data = _construct_aave_call_data("aave_v3_withdraw", params)
     approvals = _construct_aave_approvals("aave_v3_withdraw", params)
-    target_contract = AAVE_STRATEGY_CONTRACTS["aave_v3_withdraw"]
+    
+    if chain_id not in AAVE_STRATEGY_CONTRACTS:
+        raise ValueError(f"Aave strategy not supported on chain {chain_id}")
+        
+    target_contract = AAVE_STRATEGY_CONTRACTS[chain_id]["aave_v3_withdraw"]
     
     return await executor.execute_strategy(
         vault_address=vault_address,
@@ -350,6 +371,7 @@ def supply_token_to_aave(
         try:
             tx_hash = loop.run_until_complete(supply_to_aave(
                 executor=executor,
+                chain_id=chain_id,
                 vault_address=vault_address,
                 asset_address=asset_address,
                 amount=amount_wei
@@ -431,6 +453,7 @@ def withdraw_token_from_aave(
         try:
             tx_hash = loop.run_until_complete(withdraw_from_aave(
                 executor=executor,
+                chain_id=chain_id,
                 vault_address=vault_address,
                 asset_address=asset_address,
                 amount=amount_wei
