@@ -71,6 +71,15 @@ SUPPORTED_TOKENS = {
         },
         "coingeckoId": "tether",
     },
+    "WETH": {
+        "symbol": "WETH",
+        "name": "Wrapped Ether",
+        "decimals": 18,
+        "addresses": {
+            42161: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",  # Arbitrum
+        },
+        "coingeckoId": "weth",
+    },
 }
 
 # Chain configuration
