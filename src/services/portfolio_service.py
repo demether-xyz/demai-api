@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class PortfolioService:
     """Service for fetching portfolio balances and calculating total value"""
     
-    def __init__(self, db_or_mongo_util: Optional[Union["Database", MongoUtil]] = None, cache_ttl_seconds: int = 60):
+    def __init__(self, db_or_mongo_util: Optional[Union["Database", MongoUtil]] = None, cache_ttl_seconds: int = 300):
         # Handle both database and MongoUtil for backward compatibility
         if db_or_mongo_util is not None and hasattr(db_or_mongo_util, 'db'):  # It's a MongoUtil
             self.mongo_util = db_or_mongo_util
@@ -100,7 +100,7 @@ class PortfolioService:
     
     async def _get_vault_from_database(self, wallet_address: str) -> Optional[str]:
         """Get vault address from database cache"""
-        if not self.db:
+        if self.db is None:
             return None
             
         try:
@@ -118,7 +118,7 @@ class PortfolioService:
     
     async def _save_vault_to_database(self, wallet_address: str, vault_address: str):
         """Save wallet-vault mapping to database"""
-        if not self.db:
+        if self.db is None:
             return
             
         try:
@@ -187,20 +187,37 @@ class PortfolioService:
         3. Save result to database for future use
         """
         if not wallet_address:
+            logger.error("No wallet address provided for vault resolution")
             return None
             
         try:
-            # Normalize wallet address
-            wallet_address = self.Web3.to_checksum_address(wallet_address) if self.Web3 else wallet_address
+            logger.info(f"Starting vault resolution for wallet: {wallet_address}")
+            
+            # Normalize wallet address - handle different cases
+            if not self.Web3:
+                logger.error("Web3 not available for address normalization")
+                return None
+                
+            # Check if address is valid format
+            if not wallet_address.startswith('0x') or len(wallet_address) != 42:
+                logger.error(f"Invalid wallet address format: {wallet_address} (length: {len(wallet_address)})")
+                return None
+                
+            wallet_address = self.Web3.to_checksum_address(wallet_address)
+            logger.info(f"Normalized wallet address: {wallet_address}")
             
             # Step 1: Check database cache
+            logger.info("Step 1: Checking database cache...")
             cached_vault = await self._get_vault_from_database(wallet_address)
             if cached_vault:
+                logger.info(f"Found cached vault address: {cached_vault}")
                 return cached_vault
             
             # Step 2: Query on-chain
+            logger.info("Step 2: Querying on-chain...")
             vault_address = await self._get_vault_from_chain(wallet_address)
             if vault_address:
+                logger.info(f"Resolved vault address from chain: {vault_address}")
                 # Step 3: Save to database for future use
                 await self._save_vault_to_database(wallet_address, vault_address)
                 return vault_address
@@ -210,6 +227,8 @@ class PortfolioService:
             
         except Exception as e:
             logger.error(f"Error resolving vault address for wallet {wallet_address}: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return None
     
     async def get_portfolio_summary(self, vault_address: Optional[str] = None, wallet_address: Optional[str] = None) -> Dict[str, Any]:
@@ -218,227 +237,257 @@ class PortfolioService:
         """
         if not self.Web3:
             return {
-                "vault_address": vault_address,
-                "wallet_address": wallet_address,
                 "total_value_usd": 0.0,
-                "holdings": [],
-                "chains_count": 0,
-                "tokens_count": 0,
-                "strategy_count": 0,
-                "active_strategies": [],
-                "error": "Web3 not available"
+                "chains": {},
+                "strategies": {},
+                "summary": {"error": "Web3 not available"},
             }
-        
-        # Determine which address to use for portfolio lookup
-        if vault_address:
-            # Use vault address directly if provided
-            target_address = vault_address
-        elif wallet_address:
-            # Resolve vault address from wallet address
-            target_address = await self._resolve_vault_address(wallet_address)
-            if not target_address:
-                return {
-                    "vault_address": vault_address,
-                    "wallet_address": wallet_address,
-                    "total_value_usd": 0.0,
-                    "holdings": [],
-                    "chains_count": 0,
-                    "tokens_count": 0,
-                    "strategy_count": 0,
-                    "active_strategies": [],
-                    "error": f"Could not resolve vault address for wallet {wallet_address}"
-                }
-            # Update vault_address for response consistency
-            vault_address = target_address
-        else:
-            return {
-                "vault_address": vault_address,
-                "wallet_address": wallet_address,
-                "total_value_usd": 0.0,
-                "holdings": [],
-                "chains_count": 0,
-                "tokens_count": 0,
-                "strategy_count": 0,
-                "active_strategies": [],
-                "error": "Either vault_address or wallet_address must be provided"
-            }
-            
-        try:
-            # Normalize target address
-            target_address = self.Web3.to_checksum_address(target_address)
-            
-            # Check in-memory cache first
-            if target_address in self._memory_cache:
-                cached_entry = self._memory_cache[target_address]
-                is_stale = datetime.datetime.utcnow() - cached_entry['timestamp'] > self.cache_ttl
-                if not is_stale:
-                    logger.info(f"Returning in-memory cached portfolio for address {target_address}")
-                    return cached_entry['data']
-                else:
-                    # Remove stale cache entry
-                    del self._memory_cache[target_address]
-            
-            # Check database cache if no fresh in-memory cache
-            if self.db is not None:
-                cache_collection = self.db.portfolio_cache
-                cached_data = await cache_collection.find_one({"vault_address": target_address})
 
-                if cached_data and 'timestamp' in cached_data:
-                    is_stale = datetime.datetime.utcnow() - cached_data['timestamp'] > self.cache_ttl
-                    if not is_stale:
-                        logger.info(f"Returning database cached portfolio for address {target_address}")
-                        cached_data.pop('_id', None)
-                        cached_data.pop('timestamp', None)
-                        
-                        # Store in memory cache for next time
-                        self._memory_cache[target_address] = {
-                            'data': cached_data,
-                            'timestamp': datetime.datetime.utcnow()
-                        }
-                        
-                        return cached_data
+        target_address = None
+        if vault_address:
+            target_address = self.Web3.to_checksum_address(vault_address)
+        elif wallet_address:
+            resolved_vault = await self._resolve_vault_address(wallet_address)
+            if resolved_vault:
+                target_address = self.Web3.to_checksum_address(resolved_vault)
+
+        if not target_address:
+            return {
+                "total_value_usd": 0.0,
+                "chains": {},
+                "strategies": {},
+                "summary": {"error": "Could not determine vault address"},
+            }
             
-            # Get balances for all tokens across all chains concurrently
+        cached_data = await self._get_from_cache(target_address)
+        if cached_data:
+            return cached_data
+
+        try:
             token_balances_task = self._get_all_token_balances(target_address)
-            eth_balances_task = self._get_native_balances(target_address)
+            native_balances_task = self._get_native_balances(target_address)
             strategy_balances_task = self._get_all_strategy_balances(target_address)
-            
-            # Wait for all tasks to complete
-            all_balances, eth_balances, strategy_balances = await asyncio.gather(
+
+            all_token_balances, all_native_balances, all_strategy_balances = await asyncio.gather(
                 token_balances_task,
-                eth_balances_task,
+                native_balances_task,
                 strategy_balances_task
             )
+
+            all_holdings = all_token_balances + all_native_balances
             
-            # Combine all balances
-            all_balances.extend(eth_balances)
+            all_holdings = [h for h in all_holdings if h.get("balance") and h["balance"] > 0]
             
-            # Filter to only tokens with positive balances and valid coingecko IDs
-            tokens_with_balances = [
-                balance for balance in all_balances 
-                if balance["coingeckoId"] and balance["balance"] > 0
-            ]
-            
-            logger.info(f"Found {len(tokens_with_balances)} tokens with positive balances for address {target_address}")
-            
-            # Only get prices if we have tokens with balances
-            prices = {}
-            if tokens_with_balances:
-                unique_coingecko_ids = list(set(
-                    balance["coingeckoId"] for balance in tokens_with_balances
-                ))
-                logger.info(f"Getting prices for {len(unique_coingecko_ids)} unique tokens: {unique_coingecko_ids}")
-                prices = await self._get_token_prices_async(unique_coingecko_ids)
-            else:
-                logger.info("No tokens with positive balances found, skipping price lookup")
-            
-            # Calculate USD values for regular holdings
-            total_value = 0.0
-            holdings = []
-            
-            for balance in tokens_with_balances:
-                token_price = prices.get(balance["coingeckoId"], 0.0)
-                usd_value = balance["balance"] * token_price
-                total_value += usd_value
-                
-                holdings.append({
-                    "symbol": balance["symbol"],
-                    "name": balance["name"],
-                    "chain_id": balance["chain_id"],
-                    "balance": balance["balance"],
-                    "price_usd": token_price,
-                    "value_usd": usd_value,
-                    "type": "token"
-                })
-            
-            # Calculate USD values for strategy balances
-            strategy_holdings = []
-            strategy_tokens_with_prices = [
-                balance for balance in strategy_balances 
-                if balance["coingeckoId"] and balance["balance"] > 0
-            ]
-            
-            for balance in strategy_tokens_with_prices:
-                token_price = prices.get(balance["coingeckoId"], 0.0)
-                usd_value = balance["balance"] * token_price
-                total_value += usd_value
-                
-                strategy_holdings.append({
-                    "symbol": balance["token_symbol"],
-                    "name": balance["token_name"],
-                    "chain_id": balance["chain_id"],
-                    "balance": balance["balance"],
-                    "price_usd": token_price,
-                    "value_usd": usd_value,
-                    "type": "strategy",
-                    "strategy": balance["strategy"],
-                    "protocol": balance["protocol"],
-                    "strategy_type": balance["strategy_type"]
-                })
-            
-            # Combine all holdings
-            all_holdings = holdings + strategy_holdings
-            
-            # Sort holdings by USD value (highest first)
-            all_holdings.sort(key=lambda x: x["value_usd"], reverse=True)
-            
-            # Count active strategies
-            active_strategies = list(set(
-                h["strategy"] for h in strategy_holdings
+            strategy_holdings = [h for h in all_strategy_balances if h.get("balance") and h["balance"] > 0]
+
+            coingecko_ids = list(set(
+                [h["coingeckoId"] for h in all_holdings if "coingeckoId" in h] +
+                [h["coingeckoId"] for h in strategy_holdings if "coingeckoId" in h]
             ))
             
-            portfolio_summary = {
-                "vault_address": vault_address,
-                "wallet_address": wallet_address,
-                "target_address": target_address,
-                "total_value_usd": total_value,
-                "holdings": all_holdings,
-                "chains_count": len(set(h["chain_id"] for h in all_holdings)),
-                "tokens_count": len(holdings),
-                "strategy_count": len(strategy_holdings),
-                "active_strategies": active_strategies
-            }
+            token_prices = await self._get_token_prices_async(coingecko_ids)
 
-            # Store in memory cache first
-            self._memory_cache[target_address] = {
-                'data': portfolio_summary.copy(),
-                'timestamp': datetime.datetime.utcnow()
-            }
-            logger.info(f"Cached portfolio in memory for address {target_address}")
+            total_value_usd = 0
+            for holding in all_holdings:
+                price = token_prices.get(holding.get("coingeckoId"))
+                if price:
+                    holding["price_usd"] = price
+                    holding["value_usd"] = holding["balance"] * price
+                    total_value_usd += holding["value_usd"]
+            
+            for holding in strategy_holdings:
+                price = token_prices.get(holding.get("coingeckoId"))
+                if price:
+                    holding["price_usd"] = price
+                    holding["value_usd"] = holding["balance"] * price
+                    total_value_usd += holding["value_usd"]
+            
+            formatted_portfolio = self._format_portfolio_output(
+                target_address, 
+                all_holdings, 
+                strategy_holdings,
+                total_value_usd, 
+                wallet_address
+            )
+            
+            await self._put_in_cache(target_address, formatted_portfolio)
+            
+            return formatted_portfolio
 
-            # Also store in database cache if available
-            if self.db is not None:
-                try:
-                    cache_collection = self.db.portfolio_cache
-                    data_to_cache = portfolio_summary.copy()
-                    data_to_cache['timestamp'] = datetime.datetime.utcnow()
-                    
-                    await cache_collection.update_one(
-                        {"vault_address": target_address},
-                        {"$set": data_to_cache},
-                        upsert=True
-                    )
-                    logger.info(f"Cached portfolio in database for address {target_address}")
-                except Exception as e:
-                    logger.error(f"Error caching portfolio data in database for address {target_address}: {e}")
-            
-            return portfolio_summary
-            
         except Exception as e:
             logger.error(f"Error getting portfolio summary for address {target_address}: {e}")
             return {
-                "vault_address": vault_address,
-                "wallet_address": wallet_address,
-                "target_address": target_address,
                 "total_value_usd": 0.0,
-                "holdings": [],
-                "chains_count": 0,
-                "tokens_count": 0,
-                "strategy_count": 0,
-                "active_strategies": [],
-                "error": str(e)
+                "chains": {},
+                "strategies": {},
+                "summary": {"error": str(e)},
             }
-    
+
+    async def _get_from_cache(self, vault_address: str) -> Optional[Dict[str, Any]]:
+        """Check memory cache first, then database cache for fresh data."""
+        # Step 1: Check memory cache
+        if vault_address in self._memory_cache:
+            cached_entry = self._memory_cache[vault_address]
+            is_stale = datetime.datetime.utcnow() - cached_entry['timestamp'] > self.cache_ttl
+            if not is_stale:
+                logger.info(f"Returning in-memory cached portfolio for address {vault_address}")
+                return cached_entry['data']
+            else:
+                # Remove stale memory cache
+                del self._memory_cache[vault_address]
+                logger.info(f"Removed stale memory cache for address {vault_address}")
+        
+        # Step 2: Check database cache
+        if self.db is not None:
+            try:
+                cache_collection = self.db.portfolio_cache
+                result = await cache_collection.find_one({"vault_address": vault_address})
+                
+                if result and "data" in result and "timestamp" in result:
+                    cached_timestamp = result["timestamp"]
+                    is_db_stale = datetime.datetime.utcnow() - cached_timestamp > self.cache_ttl
+                    
+                    if not is_db_stale:
+                        logger.info(f"Returning database cached portfolio for address {vault_address}")
+                        # Also put back in memory cache for faster future access
+                        portfolio_data = result["data"]
+                        self._memory_cache[vault_address] = {
+                            'data': portfolio_data,
+                            'timestamp': cached_timestamp
+                        }
+                        return portfolio_data
+                    else:
+                        # Remove stale database cache
+                        await cache_collection.delete_one({"vault_address": vault_address})
+                        logger.info(f"Removed stale database cache for address {vault_address}")
+                        
+            except Exception as e:
+                logger.error(f"Error checking database cache for {vault_address}: {e}")
+        
+        return None
+
+    async def _put_in_cache(self, vault_address: str, portfolio_data: Dict[str, Any]):
+        """Put data into both memory and database cache."""
+        timestamp = datetime.datetime.utcnow()
+        
+        # Put in memory cache
+        self._memory_cache[vault_address] = {
+            'data': portfolio_data,
+            'timestamp': timestamp
+        }
+        logger.info(f"Cached portfolio in memory for address {vault_address}")
+        
+        # Put in database cache
+        if self.db is not None:
+            try:
+                cache_collection = self.db.portfolio_cache
+                await cache_collection.update_one(
+                    {"vault_address": vault_address},
+                    {
+                        "$set": {
+                            "vault_address": vault_address,
+                            "data": portfolio_data,
+                            "timestamp": timestamp
+                        }
+                    },
+                    upsert=True
+                )
+                logger.info(f"Cached portfolio in database for address {vault_address}")
+            except Exception as e:
+                logger.error(f"Error caching portfolio in database for {vault_address}: {e}")
+        
+    def _format_portfolio_output(
+        self, 
+        vault_address: str, 
+        token_holdings: List[Dict], 
+        strategy_holdings: List[Dict],
+        total_value_usd: float, 
+        wallet_address: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Format the portfolio data into the structure expected by the frontend."""
+        chains_data = {}
+        
+        for holding in token_holdings:
+            chain_id = holding["chain_id"]
+            if chain_id not in chains_data:
+                chains_data[chain_id] = {
+                    "chain_name": CHAIN_CONFIG.get(chain_id, {}).get("name", f"Chain {chain_id}"),
+                    "total_value_usd": 0,
+                    "tokens": {},
+                    "strategies": {}
+                }
+            
+            chain = chains_data[chain_id]
+            chain["total_value_usd"] += holding.get("value_usd", 0)
+            
+            symbol = holding["symbol"]
+            chain["tokens"][symbol] = {
+                "balance": holding["balance"],
+                "value_usd": holding.get("value_usd", 0)
+            }
+
+        strategies_data = {}
+        for holding in strategy_holdings:
+            chain_id = holding["chain_id"]
+            if chain_id not in chains_data:
+                 chains_data[chain_id] = {
+                    "chain_name": CHAIN_CONFIG.get(chain_id, {}).get("name", f"Chain {chain_id}"),
+                    "total_value_usd": 0,
+                    "tokens": {},
+                    "strategies": {}
+                }
+            
+            chain = chains_data[chain_id]
+            chain["total_value_usd"] += holding.get("value_usd", 0)
+            
+            strategy_key = f'{holding["protocol"]}_{holding["strategy"]}'
+            if strategy_key not in strategies_data:
+                strategies_data[strategy_key] = {
+                    "protocol": holding["protocol"],
+                    "strategy": holding["strategy"],
+                    "total_value_usd": 0,
+                    "tokens": {}
+                }
+            
+            strategy = strategies_data[strategy_key]
+            strategy["total_value_usd"] += holding.get("value_usd", 0)
+            
+            symbol = holding["token_symbol"]
+            strategy["tokens"][symbol] = {
+                "balance": holding["balance"],
+                "value_usd": holding.get("value_usd", 0)
+            }
+
+            if strategy_key not in chain["strategies"]:
+                chain["strategies"][strategy_key] = {
+                    "protocol": holding["protocol"],
+                    "strategy": holding["strategy"],
+                    "total_value_usd": 0,
+                    "tokens": {}
+                }
+            
+            chain_strategy = chain["strategies"][strategy_key]
+            chain_strategy["total_value_usd"] += holding.get("value_usd", 0)
+            chain_strategy["tokens"][symbol] = {
+                 "balance": holding["balance"],
+                "value_usd": holding.get("value_usd", 0)
+            }
+
+        summary = {
+            "total_tokens": len(token_holdings),
+            "active_strategies": list(strategies_data.keys()),
+            "active_chains": list(chains_data.keys())
+        }
+
+        return {
+            "vault_address": vault_address,
+            "wallet_address": wallet_address,
+            "total_value_usd": total_value_usd,
+            "chains": {v["chain_name"]: v for k, v in chains_data.items()},
+            "strategies": strategies_data,
+            "summary": summary
+        }
+
     async def _get_token_prices_async(self, coingecko_ids: List[str]) -> Dict[str, float]:
         """Async wrapper for getting token prices with proper event loop handling"""
         if not coingecko_ids:

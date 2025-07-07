@@ -11,6 +11,9 @@ from setup import setup
 from contextlib import asynccontextmanager
 from pancaik.core.config import get_config
 
+# Global portfolio service instance
+portfolio_service = None
+
 # Auth message that must match frontend DEMAI_AUTH_MESSAGE
 DEMAI_AUTH_MESSAGE = """Welcome to demAI!
 
@@ -22,6 +25,15 @@ This signature will not trigger any blockchain transactions or grant any token a
 async def lifespan(app: FastAPI):
     # Startup logic here
     await setup(app)
+    
+    # Initialize global portfolio service once on startup
+    db = get_config("db")
+    if db is not None:
+        global portfolio_service
+        portfolio_service = PortfolioService(db, cache_ttl_seconds=300)  # 5 minute cache
+        app.state.portfolio_service = portfolio_service
+        logger.info("Portfolio service initialized on startup")
+    
     yield
     # Shutdown logic here
     db = get_config("db")
@@ -101,24 +113,26 @@ async def portfolio_endpoint(request: PortfolioRequest):
         raise HTTPException(status_code=401, detail="Invalid signature or wallet address")
     
     try:
-        # Get database from pancaik config
-        db = get_config("db")
-        if db is None:
-            raise HTTPException(status_code=500, detail="Database not initialized")
+        # Use the global portfolio service instance
+        portfolio_service = getattr(app.state, 'portfolio_service', None)
+        if portfolio_service is None:
+            raise HTTPException(status_code=500, detail="Portfolio service not initialized")
         
-        # Initialize portfolio service with pancaik database
-        portfolio_service = PortfolioService(db)
+        # Ensure wallet address is properly checksummed for Web3 operations
+        w3 = Web3()
+        checksummed_wallet_address = w3.to_checksum_address(request.wallet_address)
+        checksummed_vault_address = w3.to_checksum_address(request.vault_address) if request.vault_address else None
         
         # If refresh is requested, clear cache first
         if request.refresh:
             # Determine target address for cache clearing
-            target_address = request.vault_address if request.vault_address else request.wallet_address
+            target_address = checksummed_vault_address if checksummed_vault_address else checksummed_wallet_address
             await portfolio_service.clear_portfolio_cache(target_address)
         
-        # Get portfolio summary - pass both vault and wallet address
+        # Get portfolio summary - pass both vault and wallet address (both properly checksummed)
         portfolio_data = await portfolio_service.get_portfolio_summary(
-            vault_address=request.vault_address,
-            wallet_address=request.wallet_address
+            vault_address=checksummed_vault_address,
+            wallet_address=checksummed_wallet_address
         )
         
         return portfolio_data
