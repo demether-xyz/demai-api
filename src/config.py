@@ -22,6 +22,7 @@ load_dotenv()
 KEYCHAIN_SECRETS = [
     ("global", "OPENROUTER_API_KEY", None),
     ("demether", "PRIVATE_KEY", None),
+    ("ezenciel", "MONGO_CONNECTION", None),
 ]
 
 
@@ -50,6 +51,15 @@ SUPPORTED_TOKENS = {
             42161: "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f",  # Arbitrum
         },
         "coingeckoId": "wrapped-bitcoin",
+    },
+    "SOLVBTC": {
+        "symbol": "SOLVBTC",
+        "name": "SolvBTC",
+        "decimals": 8,
+        "addresses": {
+            1116: "0x9410e8052Bc661041e5cB27fDf7d9e9e842af2aa",  # Core
+        },
+        "coingeckoId": "solvbtc",
     },
     "USDC": {
         "symbol": "USDC",
