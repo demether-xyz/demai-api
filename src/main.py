@@ -48,7 +48,7 @@ class ChatRequest(BaseModel):
     signature: str
 
 class PortfolioRequest(BaseModel):
-    vault_address: str
+    vault_address: Optional[str] = None  # Make vault address optional
     wallet_address: str  # Wallet address for authentication
     signature: str
     refresh: Optional[bool] = False
@@ -89,7 +89,7 @@ async def chat_endpoint(request: ChatRequest):
 
 @app.post("/portfolio/")
 async def portfolio_endpoint(request: PortfolioRequest):
-    """Get portfolio summary for a vault address"""
+    """Get portfolio summary for a vault address or wallet address"""
     # Verify the signature with the same auth message as chat endpoint
     is_valid = verify_signature(
         message=DEMAI_AUTH_MESSAGE,
@@ -111,15 +111,20 @@ async def portfolio_endpoint(request: PortfolioRequest):
         
         # If refresh is requested, clear cache first
         if request.refresh:
-            await portfolio_service.clear_portfolio_cache(request.vault_address)
+            # Determine target address for cache clearing
+            target_address = request.vault_address if request.vault_address else request.wallet_address
+            await portfolio_service.clear_portfolio_cache(target_address)
         
-        # Get portfolio summary for the vault address
-        portfolio_data = await portfolio_service.get_portfolio_summary(request.vault_address)
+        # Get portfolio summary - pass both vault and wallet address
+        portfolio_data = await portfolio_service.get_portfolio_summary(
+            vault_address=request.vault_address,
+            wallet_address=request.wallet_address
+        )
         
         return portfolio_data
         
     except Exception as e:
-        logger.error(f"Error getting portfolio for vault {request.vault_address}: {e}")
+        logger.error(f"Error getting portfolio for vault {request.vault_address} / wallet {request.wallet_address}: {e}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 if __name__ == "__main__":

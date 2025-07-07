@@ -128,3 +128,31 @@ ERC20_ABI = [
         "type": "function"
     }
 ]
+
+# VaultFactory contract addresses (same address on all chains due to CREATE2)
+VAULT_FACTORY_ADDRESS = "0x5C97F0a08a1c8a3Ed6C1E1dB2f7Ce08a4BFE53C7"
+
+# VaultFactory ABI - only the methods we need
+VAULT_FACTORY_ABI = [
+    {
+        "inputs": [{"internalType": "address", "name": "vaultOwner", "type": "address"}],
+        "name": "predictVaultAddress",
+        "outputs": [{"internalType": "address", "name": "", "type": "address"}],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [{"internalType": "address", "name": "user", "type": "address"}],
+        "name": "getUserVault",
+        "outputs": [{"internalType": "address", "name": "", "type": "address"}],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [{"internalType": "address", "name": "user", "type": "address"}],
+        "name": "hasVault",
+        "outputs": [{"internalType": "bool", "name": "", "type": "bool"}],
+        "stateMutability": "view",
+        "type": "function"
+    }
+]
