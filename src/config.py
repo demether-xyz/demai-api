@@ -67,6 +67,18 @@ SUPPORTED_TOKENS = {
         },
         "coingeckoId": "bitcoin",
     },
+    "WBTC": {
+        "symbol": "WBTC",
+        "name": "Wrapped Bitcoin",
+        "decimals": 18,
+        "addresses": {
+            1116: "0x5832f53d147b3d6Cd4578B9CBD62425C7ea9d0Bd",  # Core
+        },
+        "aave_atokens": {
+            1116: "0x2e3ea6cf100632A4A4B34F26681A6f50347775C9",  # aCoreWBTC
+        },
+        "coingeckoId": "wrapped-bitcoin",
+    },
     "USDC": {
         "symbol": "USDC",
         "name": "USD Coin",

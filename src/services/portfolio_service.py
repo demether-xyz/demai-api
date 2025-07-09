@@ -673,8 +673,16 @@ class PortfolioService:
         
         # Create tasks for each strategy balance checker
         for strategy_name, balance_checker in STRATEGY_BALANCE_CHECKERS.items():
-            task = balance_checker(self.web3_instances, vault_address, SUPPORTED_TOKENS)
-            tasks.append(task) # Directly append the coroutine
+            if balance_checker is None:
+                logger.warning(f"Strategy {strategy_name} has no balance checker configured, skipping")
+                continue
+                
+            try:
+                task = balance_checker(self.web3_instances, vault_address, SUPPORTED_TOKENS)
+                tasks.append(task) # Directly append the coroutine
+            except Exception as e:
+                logger.error(f"Error creating task for {strategy_name} strategy: {e}")
+                continue
         
         logger.info(f"Checking strategy balances for {len(tasks)} strategies")
         
