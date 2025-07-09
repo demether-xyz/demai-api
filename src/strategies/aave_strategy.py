@@ -16,22 +16,23 @@ AAVE_STRATEGY_CONTRACTS = {
     42161: {  # Arbitrum
         "aave_v3_supply": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",  # Aave V3 Pool on Arbitrum
         "aave_v3_withdraw": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",  # Same contract, different function
+        "aave_protocol_data_provider": "0x69FA688f1Dc47d4B5d8029D5a35FB7a548310654",  # AaveProtocolDataProvider on Arbitrum
     },
     1116: { # Core
         "aave_v3_supply": "0x0CEa9F0F49F30d376390e480ba32f903B43B19C5", # Aave V3 Pool on Core
         "aave_v3_withdraw": "0x0CEa9F0F49F30d376390e480ba32f903B43B19C5", # Same contract, different function
+        "aave_protocol_data_provider": "0x0CEa9F0F49F30d376390e480ba32f903B43B19C5",  # Use Pool as fallback for Core
     }
 }
 
-# Aave V3 aToken addresses for supported tokens
-AAVE_ATOKENS = {
-    42161: {  # Arbitrum
-        "USDC": "0x724dc807b04555b71ed48a6896b6F41593b8C637",  # aArbUSDC
-    },
-    1116: { # Core
-        "USDC": "0xa4151B2B3e269645181dCcF2D426cE75fcbDeca9",
-    }
-}
+# Helper function to get aToken address from centralized config
+def get_atoken_address(token_symbol: str, chain_id: int) -> str:
+    """Get aToken address from SUPPORTED_TOKENS config"""
+    try:
+        from config import SUPPORTED_TOKENS
+        return SUPPORTED_TOKENS[token_symbol]["aave_atokens"][chain_id]
+    except KeyError:
+        return None
 
 # Aave V3 strategy function signatures
 AAVE_STRATEGY_FUNCTIONS = {
@@ -46,6 +47,58 @@ AAVE_STRATEGY_FUNCTIONS = {
         "requires_approval": False
     }
 }
+
+# ABI for reading reserve data from Aave V3 Pool
+AAVE_POOL_ABI = [
+    {
+        "inputs": [{"internalType": "address", "name": "asset", "type": "address"}],
+        "name": "getReserveData",
+        "outputs": [
+            {"internalType": "uint256", "name": "unbacked", "type": "uint256"},
+            {"internalType": "uint256", "name": "accruedToTreasuryScaled", "type": "uint256"},
+            {"internalType": "uint256", "name": "totalAToken", "type": "uint256"},
+            {"internalType": "uint256", "name": "totalStableDebt", "type": "uint256"},
+            {"internalType": "uint256", "name": "totalVariableDebt", "type": "uint256"},
+            {"internalType": "uint256", "name": "liquidityRate", "type": "uint256"},
+            {"internalType": "uint256", "name": "variableBorrowRate", "type": "uint256"},
+            {"internalType": "uint256", "name": "stableBorrowRate", "type": "uint256"},
+            {"internalType": "uint256", "name": "averageStableBorrowRate", "type": "uint256"},
+            {"internalType": "uint256", "name": "liquidityIndex", "type": "uint256"},
+            {"internalType": "uint256", "name": "variableBorrowIndex", "type": "uint256"},
+            {"internalType": "uint40", "name": "lastUpdateTimestamp", "type": "uint40"}
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    }
+]
+
+# ABI for AaveProtocolDataProvider
+AAVE_PROTOCOL_DATA_PROVIDER_ABI = [
+    {
+        "inputs": [{"internalType": "address", "name": "asset", "type": "address"}],
+        "name": "getReserveData",
+        "outputs": [
+            {"internalType": "uint256", "name": "unbacked", "type": "uint256"},
+            {"internalType": "uint256", "name": "accruedToTreasuryScaled", "type": "uint256"},
+            {"internalType": "uint256", "name": "totalAToken", "type": "uint256"},
+            {"internalType": "uint256", "name": "totalStableDebt", "type": "uint256"},
+            {"internalType": "uint256", "name": "totalVariableDebt", "type": "uint256"},
+            {"internalType": "uint256", "name": "liquidityRate", "type": "uint256"},
+            {"internalType": "uint256", "name": "variableBorrowRate", "type": "uint256"},
+            {"internalType": "uint256", "name": "stableBorrowRate", "type": "uint256"},
+            {"internalType": "uint256", "name": "averageStableBorrowRate", "type": "uint256"},
+            {"internalType": "uint256", "name": "liquidityIndex", "type": "uint256"},
+            {"internalType": "uint256", "name": "variableBorrowIndex", "type": "uint256"},
+            {"internalType": "uint40", "name": "lastUpdateTimestamp", "type": "uint40"}
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    }
+]
+
+# Ray math constants - Aave uses ray (1e27) for rates
+RAY = 10**27
+SECONDS_PER_YEAR = 365 * 24 * 60 * 60
 
 async def get_aave_strategy_balances(web3_instances: Dict, vault_address: str, supported_tokens: Dict) -> List[Dict[str, Any]]:
     """
@@ -71,16 +124,11 @@ async def get_aave_strategy_balances(web3_instances: Dict, vault_address: str, s
                     logger.warning(f"Chain {chain_id} not available for Aave strategy")
                     continue
                     
-                if chain_id not in AAVE_ATOKENS:
-                    logger.warning(f"Aave aTokens not configured for chain {chain_id}")
-                    continue
-                    
-                if token_symbol not in AAVE_ATOKENS[chain_id]:
+                # Get aToken address from centralized config
+                atoken_address = get_atoken_address(token_symbol, chain_id)
+                if not atoken_address:
                     logger.warning(f"Aave aToken not configured for {token_symbol} on chain {chain_id}")
                     continue
-                
-                # Get aToken balance
-                atoken_address = AAVE_ATOKENS[chain_id][token_symbol]
                 balance = await _get_atoken_balance_async(
                     web3_instances[chain_id], 
                     vault_address, 
@@ -88,8 +136,13 @@ async def get_aave_strategy_balances(web3_instances: Dict, vault_address: str, s
                     token_config["decimals"]
                 )
                 
+                # Get current yield information
+                yield_info = await get_aave_current_yield(
+                    web3_instances, token_symbol, chain_id, supported_tokens
+                )
+                
                 if balance > 0:
-                    strategy_balances.append({
+                    balance_data = {
                         "strategy": "aave_v3",
                         "protocol": "Aave V3",
                         "token_symbol": token_symbol,
@@ -100,13 +153,325 @@ async def get_aave_strategy_balances(web3_instances: Dict, vault_address: str, s
                         "underlying_token": token_config["addresses"][chain_id],
                         "coingeckoId": token_config.get("coingeckoId"),
                         "strategy_type": "lending"
-                    })
-                    logger.info(f"Found Aave balance: {balance} {token_symbol} on chain {chain_id}")
+                    }
+                    
+                    # Add yield information if available
+                    if "error" not in yield_info:
+                        balance_data.update({
+                            "current_apy": yield_info.get("supply_apy", 0),
+                            "utilization_rate": yield_info.get("utilization_rate", 0),
+                            "total_liquidity": yield_info.get("total_liquidity", 0),
+                            "last_update_timestamp": yield_info.get("last_update_timestamp", 0)
+                        })
+                    
+                    strategy_balances.append(balance_data)
+                    logger.info(f"Found Aave balance: {balance} {token_symbol} on chain {chain_id} with APY: {yield_info.get('supply_apy', 'N/A')}%")
     
     except Exception as e:
         logger.error(f"Error getting Aave strategy balances: {e}")
     
     return strategy_balances
+
+async def get_aave_current_yield(web3_instances: Dict, token_symbol: str, chain_id: int, supported_tokens: Dict) -> Dict[str, Any]:
+    """
+    Get current yield (APY) for a token on Aave V3
+    
+    Args:
+        web3_instances: Dictionary of Web3 instances by chain_id
+        token_symbol: Token symbol (e.g., "USDC", "USDT")
+        chain_id: Chain ID to check
+        supported_tokens: Dictionary of supported tokens from config
+        
+    Returns:
+        Dictionary containing yield information
+    """
+    try:
+        if chain_id not in web3_instances:
+            logger.error(f"Chain {chain_id} not available for Aave yield query")
+            return {"error": f"Chain {chain_id} not available"}
+            
+        if chain_id not in AAVE_STRATEGY_CONTRACTS:
+            logger.error(f"Aave contracts not configured for chain {chain_id}")
+            return {"error": f"Aave not supported on chain {chain_id}"}
+            
+        if token_symbol not in supported_tokens:
+            logger.error(f"Token {token_symbol} not supported")
+            return {"error": f"Token {token_symbol} not supported"}
+            
+        token_config = supported_tokens[token_symbol]
+        if chain_id not in token_config["addresses"]:
+            logger.error(f"Token {token_symbol} not available on chain {chain_id}")
+            return {"error": f"Token {token_symbol} not available on chain {chain_id}"}
+            
+        token_address = token_config["addresses"][chain_id]
+        w3 = web3_instances[chain_id]
+        
+        # Get yield data from Aave Pool contract
+        yield_data = await _get_aave_reserve_data_async(w3, token_address, chain_id)
+        
+        if yield_data:
+            # Convert ray format to APY percentage
+            supply_apy = _ray_to_apy(yield_data["liquidityRate"])
+            borrow_apy = _ray_to_apy(yield_data["variableBorrowRate"])
+            
+            return {
+                "token_symbol": token_symbol,
+                "chain_id": chain_id,
+                "supply_apy": supply_apy,
+                "borrow_apy": borrow_apy,
+                "liquidity_rate_ray": yield_data["liquidityRate"],
+                "variable_borrow_rate_ray": yield_data["variableBorrowRate"],
+                "total_liquidity": yield_data["totalAToken"],
+                "total_debt": yield_data["totalVariableDebt"],
+                "utilization_rate": _calculate_utilization_rate(
+                    yield_data["totalAToken"], 
+                    yield_data["totalVariableDebt"]
+                ),
+                "last_update_timestamp": yield_data["lastUpdateTimestamp"]
+            }
+        else:
+            return {"error": "Failed to retrieve yield data"}
+            
+    except Exception as e:
+        logger.error(f"Error getting Aave yield for {token_symbol} on chain {chain_id}: {e}")
+        return {"error": str(e)}
+
+async def get_aave_yields_for_all_tokens(web3_instances: Dict, supported_tokens: Dict) -> List[Dict[str, Any]]:
+    """
+    Get current yields for all supported tokens on all chains
+    
+    Args:
+        web3_instances: Dictionary of Web3 instances by chain_id
+        supported_tokens: Dictionary of supported tokens from config
+        
+    Returns:
+        List of yield information for all tokens
+    """
+    yields = []
+    
+    for token_symbol, token_config in supported_tokens.items():
+        for chain_id in token_config["addresses"].keys():
+            if chain_id in AAVE_STRATEGY_CONTRACTS:
+                yield_data = await get_aave_current_yield(
+                    web3_instances, token_symbol, chain_id, supported_tokens
+                )
+                if "error" not in yield_data:
+                    yields.append(yield_data)
+                    
+    return yields
+
+async def _get_aave_reserve_data_async(w3: Web3, token_address: str, chain_id: int) -> Optional[Dict]:
+    """
+    Async wrapper for getting Aave reserve data
+    """
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        None, 
+        _get_aave_reserve_data, 
+        w3, token_address, chain_id
+    )
+
+def _get_aave_reserve_data(w3: Web3, token_address: str, chain_id: int) -> Optional[Dict]:
+    """
+    Get reserve data from Aave V3 Pool contract
+    
+    Args:
+        w3: Web3 instance
+        token_address: Token contract address
+        chain_id: Chain ID
+        
+    Returns:
+        Dictionary with reserve data or None if error
+    """
+    try:
+        # Use Pool contract directly for Core, AaveProtocolDataProvider for Arbitrum
+        if chain_id == 1116:  # Core
+            # Use raw call for Core since ABI decoding fails
+            pool_address = AAVE_STRATEGY_CONTRACTS[chain_id]["aave_v3_supply"]
+            function_selector = w3.keccak(text='getReserveData(address)')[:4]
+            encoded_address = w3.to_bytes(hexstr=token_address.replace('0x', '').zfill(64))
+            call_data = function_selector + encoded_address
+            
+            result = w3.eth.call({
+                'to': pool_address,
+                'data': call_data.hex()
+            })
+            
+            # Decode raw result manually
+            chunks = [result[i:i+32] for i in range(0, len(result), 32)]
+            reserve_data = [int.from_bytes(chunk, 'big') for chunk in chunks]
+        else:  # Arbitrum - use AaveProtocolDataProvider
+            data_provider_address = AAVE_STRATEGY_CONTRACTS[chain_id]["aave_protocol_data_provider"]
+            data_provider_contract = w3.eth.contract(
+                address=Web3.to_checksum_address(data_provider_address),
+                abi=AAVE_PROTOCOL_DATA_PROVIDER_ABI
+            )
+            reserve_data = data_provider_contract.functions.getReserveData(
+                Web3.to_checksum_address(token_address)
+            ).call()
+        
+        # Map the returned tuple to named fields
+        if chain_id == 1116:  # Core has different structure
+            # Based on UI comparison, Field 2 contains the correct supply APY
+            return {
+                "unbacked": 0,
+                "accruedToTreasuryScaled": 0,
+                "totalAToken": reserve_data[1] if len(reserve_data) > 1 else 0,
+                "totalStableDebt": 0,
+                "totalVariableDebt": reserve_data[4] if len(reserve_data) > 4 else 0,
+                "liquidityRate": reserve_data[2] if len(reserve_data) > 2 else 0,  # Field 2 is the correct supply APY
+                "variableBorrowRate": reserve_data[4] if len(reserve_data) > 4 else 0,  # Field 4 might be borrow rate
+                "stableBorrowRate": 0,
+                "averageStableBorrowRate": 0,
+                "liquidityIndex": 0,
+                "variableBorrowIndex": 0,
+                "lastUpdateTimestamp": reserve_data[6] if len(reserve_data) > 6 else 0  # Field 6 is timestamp
+            }
+        else:  # Standard Aave V3 structure
+            return {
+                "unbacked": reserve_data[0],
+                "accruedToTreasuryScaled": reserve_data[1],
+                "totalAToken": reserve_data[2],
+                "totalStableDebt": reserve_data[3],
+                "totalVariableDebt": reserve_data[4],
+                "liquidityRate": reserve_data[5],
+                "variableBorrowRate": reserve_data[6],
+                "stableBorrowRate": reserve_data[7],
+                "averageStableBorrowRate": reserve_data[8],
+                "liquidityIndex": reserve_data[9],
+                "variableBorrowIndex": reserve_data[10],
+                "lastUpdateTimestamp": reserve_data[11]
+            }
+        
+    except Exception as e:
+        logger.error(f"Error getting Aave reserve data for {token_address} on chain {chain_id}: {e}")
+        return None
+
+def _ray_to_apy(ray_rate: int) -> float:
+    """
+    Convert Aave ray format rate to APY percentage
+    
+    Args:
+        ray_rate: Rate in ray format (1e27 = 100%)
+        
+    Returns:
+        APY as percentage (e.g., 5.25 for 5.25%)
+    """
+    try:
+        if ray_rate == 0:
+            return 0.0
+        
+        # Use Decimal for high precision arithmetic to avoid overflow
+        from decimal import Decimal, getcontext
+        getcontext().prec = 50  # Set high precision
+        
+        # Convert ray to decimal (ray rates in Aave V3 are annual rates)
+        ray_decimal = Decimal(str(ray_rate))
+        ray_base = Decimal('1000000000000000000000000000')  # 1e27
+        
+        # Get annual rate as decimal
+        annual_rate = ray_decimal / ray_base
+        
+        # Convert to percentage
+        return float(annual_rate * 100)
+        
+    except (OverflowError, ValueError) as e:
+        logger.error(f"Error converting ray {ray_rate} to APY: {e}")
+        return 0.0
+
+def _calculate_utilization_rate(total_liquidity: int, total_debt: int) -> float:
+    """
+    Calculate utilization rate as percentage
+    
+    Args:
+        total_liquidity: Total liquidity in the pool
+        total_debt: Total debt borrowed
+        
+    Returns:
+        Utilization rate as percentage
+    """
+    if total_liquidity == 0:
+        return 0.0
+        
+    return (total_debt / total_liquidity) * 100
+
+def get_aave_yield_for_token(
+    token_symbol: str,
+    chain_name: str
+) -> str:
+    """
+    Get current yield (APY) for a token on Aave V3 on a specified chain.
+    This is a synchronous function for LangChain compatibility.
+
+    Args:
+        token_symbol: The symbol of the token (e.g., "USDC", "USDT").
+        chain_name: The name of the blockchain network (e.g., "Arbitrum").
+
+    Returns:
+        A JSON string with yield information or error message.
+    """
+    try:
+        # Import here to avoid circular imports
+        from config import SUPPORTED_TOKENS, CHAIN_CONFIG, RPC_ENDPOINTS
+        from web3 import Web3
+        
+        # Find chain_id from chain_name
+        chain_id = None
+        for c_id, config in CHAIN_CONFIG.items():
+            if config["name"].lower() == chain_name.lower():
+                chain_id = c_id
+                break
+
+        if chain_id is None:
+            return json.dumps({"status": "error", "message": f"Unknown chain name: {chain_name}"})
+
+        # Get token details from SUPPORTED_TOKENS
+        token_config = SUPPORTED_TOKENS.get(token_symbol.upper())
+        if not token_config:
+            return json.dumps({"status": "error", "message": f"Unsupported token symbol: {token_symbol}"})
+
+        token_address = token_config["addresses"].get(chain_id)
+        if not token_address:
+            return json.dumps({"status": "error", "message": f"Token {token_symbol} not available on {chain_name}"})
+
+        # Get RPC URL and create Web3 instance
+        rpc_url = RPC_ENDPOINTS.get(chain_id)
+        if not rpc_url:
+            return json.dumps({"status": "error", "message": f"RPC URL not found for chain ID: {chain_id}"})
+        
+        w3 = Web3(Web3.HTTPProvider(rpc_url))
+        if not w3.is_connected():
+            return json.dumps({"status": "error", "message": f"Failed to connect to {chain_name} RPC"})
+
+        # Get yield data synchronously
+        reserve_data = _get_aave_reserve_data(w3, token_address, chain_id)
+        
+        if reserve_data:
+            supply_apy = _ray_to_apy(reserve_data["liquidityRate"])
+            borrow_apy = _ray_to_apy(reserve_data["variableBorrowRate"])
+            utilization_rate = _calculate_utilization_rate(
+                reserve_data["totalAToken"], 
+                reserve_data["totalVariableDebt"]
+            )
+            
+            return json.dumps({
+                "status": "success",
+                "data": {
+                    "token_symbol": token_symbol,
+                    "chain_name": chain_name,
+                    "supply_apy": round(supply_apy, 4),
+                    "borrow_apy": round(borrow_apy, 4),
+                    "utilization_rate": round(utilization_rate, 2),
+                    "total_liquidity": reserve_data["totalAToken"],
+                    "total_debt": reserve_data["totalVariableDebt"]
+                }
+            })
+        else:
+            return json.dumps({"status": "error", "message": "Failed to retrieve yield data from Aave"})
+
+    except Exception as e:
+        logger.error(f"Error in get_aave_yield_for_token: {e}")
+        return json.dumps({"status": "error", "message": f"An unexpected error occurred: {str(e)}"})
 
 async def _get_atoken_balance_async(w3: Web3, vault_address: str, atoken_address: str, decimals: int) -> float:
     """

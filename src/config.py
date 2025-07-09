@@ -43,23 +43,29 @@ load_keychain_secrets()
 
 # Token configuration matching frontend tokens.ts
 SUPPORTED_TOKENS = {
-    "WBTC": {
-        "symbol": "WBTC",
-        "name": "Wrapped Bitcoin",
-        "decimals": 8,
-        "addresses": {
-            42161: "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f",  # Arbitrum
-        },
-        "coingeckoId": "wrapped-bitcoin",
-    },
     "SOLVBTC": {
         "symbol": "SOLVBTC",
         "name": "SolvBTC",
-        "decimals": 8,
+        "decimals": 18,
         "addresses": {
-            1116: "0x9410e8052Bc661041e5cB27fDf7d9e9e842af2aa",  # Core
+            1116: "0x5B1Fb849f1F76217246B8AAAC053b5C7b15b7dc3",  # Core
+        },
+        "aave_atokens": {
+            1116: "0x58e95162dBc71650BCac4AeAD39fe2d758Fc967C",  # aCoreSOLVBTC
         },
         "coingeckoId": "solvbtc",
+    },
+    "BTCB": {
+        "symbol": "BTCB",
+        "name": "Bitcoin",
+        "decimals": 18,
+        "addresses": {
+            1116: "0x7a6888c85edba8e38f6c7e0485212da602761c08",  # Core
+        },
+        "aave_atokens": {
+            1116: "0x7a6888c85edba8e38f6c7e0485212da602761c08",  # Colend BTCB
+        },
+        "coingeckoId": "bitcoin",
     },
     "USDC": {
         "symbol": "USDC",
@@ -68,6 +74,10 @@ SUPPORTED_TOKENS = {
         "addresses": {
             42161: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",  # Arbitrum (native USDC)
             1116: "0xa4151B2B3e269645181dCcF2D426cE75fcbDeca9",  # Core
+        },
+        "aave_atokens": {
+            42161: "0x724dc807b04555b71ed48a6896b6F41593b8C637",  # aArbUSDC
+            1116: "0x8f9d6649C4ac1d894BB8A26c3eed8f1C9C5f82Dd",  # aToken address on Core
         },
         "coingeckoId": "usd-coin",
     },
@@ -79,16 +89,11 @@ SUPPORTED_TOKENS = {
             42161: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9",  # Arbitrum
             1116: "0x900101d06A7426441Ae63e9AB3B9b0F63Be145F1",  # Core
         },
-        "coingeckoId": "tether",
-    },
-    "WETH": {
-        "symbol": "WETH",
-        "name": "Wrapped Ether",
-        "decimals": 18,
-        "addresses": {
-            42161: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",  # Arbitrum
+        "aave_atokens": {
+            42161: "0x6ab707Aca953eDAeFBc4fD23bA73294241490620",  # aArbUSDT
+            1116: "0x98cD652fD1f5324A1AF6D64b3F6c8DCF2d8cd0D3",  # aCoreUSDT
         },
-        "coingeckoId": "weth",
+        "coingeckoId": "tether",
     },
 }
 

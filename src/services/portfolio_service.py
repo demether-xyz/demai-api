@@ -52,17 +52,73 @@ class PortfolioService:
         if not self.Web3:
             logger.error("Web3 not available - cannot initialize connections")
             return
+        
+        # Initialize connections asynchronously to avoid blocking startup
+        import threading
+        
+        def init_connections():
+            for chain_id, rpc_url in RPC_ENDPOINTS.items():
+                try:
+                    w3 = self.Web3(self.Web3.HTTPProvider(rpc_url))
+                    # Quick connection test with timeout
+                    try:
+                        w3.eth.get_block_number()  # Fast test
+                        self.web3_instances[chain_id] = w3
+                        logger.info(f"Connected to chain {chain_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to connect to chain {chain_id}: {e}")
+                except Exception as e:
+                    logger.error(f"Error creating Web3 instance for chain {chain_id}: {e}")
+        
+        # Run connection initialization in background thread
+        thread = threading.Thread(target=init_connections, daemon=True)
+        thread.start()
+        logger.info("Web3 connections initializing in background...")
+    
+    async def ensure_web3_connections(self):
+        """Ensure Web3 connections are ready, with retry logic"""
+        max_retries = 5
+        retry_delay = 1
+        
+        for attempt in range(max_retries):
+            if len(self.web3_instances) > 0:
+                return True
             
-        for chain_id, rpc_url in RPC_ENDPOINTS.items():
+            logger.info(f"Waiting for Web3 connections... (attempt {attempt + 1}/{max_retries})")
+            await asyncio.sleep(retry_delay)
+            retry_delay *= 1.5  # Exponential backoff
+        
+        logger.warning("Web3 connections not fully ready, proceeding with available connections")
+        return len(self.web3_instances) > 0
+    
+    async def warm_cache_for_vault(self, vault_address: str):
+        """Warm the cache for a specific vault address"""
+        try:
+            logger.info(f"Warming cache for vault {vault_address}")
+            await self.get_portfolio_summary(vault_address=vault_address)
+            logger.info(f"Cache warmed for vault {vault_address}")
+        except Exception as e:
+            logger.error(f"Error warming cache for vault {vault_address}: {e}")
+    
+    async def get_cache_stats(self) -> Dict[str, Any]:
+        """Get cache statistics"""
+        memory_cache_size = len(self._memory_cache)
+        
+        db_cache_size = 0
+        if self.db is not None:
             try:
-                w3 = self.Web3(self.Web3.HTTPProvider(rpc_url))
-                if w3.is_connected():
-                    self.web3_instances[chain_id] = w3
-                    logger.info(f"Connected to chain {chain_id}")
-                else:
-                    logger.warning(f"Failed to connect to chain {chain_id}")
+                cache_collection = self.db.portfolio_cache
+                db_cache_size = await cache_collection.count_documents({})
             except Exception as e:
-                logger.error(f"Error connecting to chain {chain_id}: {e}")
+                logger.error(f"Error getting database cache size: {e}")
+        
+        return {
+            "memory_cache_entries": memory_cache_size,
+            "database_cache_entries": db_cache_size,
+            "cache_ttl_seconds": self.cache_ttl.total_seconds(),
+            "web3_connections": len(self.web3_instances),
+            "available_chains": list(self.web3_instances.keys())
+        }
     
     async def clear_portfolio_cache(self, vault_address: Optional[str] = None):
         """Clear all caches (memory and DB) for a specific vault or all vaults."""
@@ -98,12 +154,34 @@ class PortfolioService:
             self._memory_cache.clear()
             logger.info("Cleared all memory cache")
     
+    async def _ensure_database_indexes(self):
+        """Ensure database indexes exist for optimal performance"""
+        if self.db is None:
+            return
+        
+        try:
+            # Index for wallet-vault mapping
+            wallet_vault_collection = self.db.wallet_vault_mapping
+            await wallet_vault_collection.create_index("wallet_address", unique=True)
+            
+            # Index for portfolio cache
+            cache_collection = self.db.portfolio_cache
+            await cache_collection.create_index("vault_address", unique=True)
+            await cache_collection.create_index("timestamp")  # For TTL cleanup
+            
+            logger.info("Database indexes ensured for portfolio service")
+        except Exception as e:
+            logger.error(f"Error creating database indexes: {e}")
+
     async def _get_vault_from_database(self, wallet_address: str) -> Optional[str]:
         """Get vault address from database cache"""
         if self.db is None:
             return None
             
         try:
+            # Ensure indexes exist (idempotent operation)
+            await self._ensure_database_indexes()
+            
             wallet_vault_collection = self.db.wallet_vault_mapping
             result = await wallet_vault_collection.find_one({"wallet_address": wallet_address})
             
@@ -243,6 +321,16 @@ class PortfolioService:
                 "summary": {"error": "Web3 not available"},
             }
 
+        # Ensure Web3 connections are ready
+        connections_ready = await self.ensure_web3_connections()
+        if not connections_ready:
+            return {
+                "total_value_usd": 0.0,
+                "chains": {},
+                "strategies": {},
+                "summary": {"error": "Web3 connections not ready"},
+            }
+
         target_address = None
         if vault_address:
             target_address = self.Web3.to_checksum_address(vault_address)
@@ -261,6 +349,7 @@ class PortfolioService:
             
         cached_data = await self._get_from_cache(target_address)
         if cached_data:
+            logger.info(f"Returning cached portfolio for {target_address}")
             return cached_data
 
         try:
