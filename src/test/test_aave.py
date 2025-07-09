@@ -27,8 +27,8 @@ ENABLE_SUPPLY = False
 ENABLE_WITHDRAW = True
 
 # Asset and amount for the test
-TEST_TOKEN_SYMBOL = "USDC"
-TEST_AMOUNT_TO_INTERACT = 0.0001  # e.g., 0.0001 USDC
+TEST_TOKEN_SYMBOL = "SOLVBTC"
+TEST_AMOUNT_TO_INTERACT = 0.0000001
 
 # --- End Test Configuration ---
 
