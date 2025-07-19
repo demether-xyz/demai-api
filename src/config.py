@@ -48,10 +48,10 @@ SUPPORTED_TOKENS = {
         "name": "SolvBTC",
         "decimals": 18,
         "addresses": {
-            1116: "0x5B1Fb849f1F76217246B8AAAC053b5C7b15b7dc3",  # Core
+            1116: "0xe04d21d999FaEDf1e72AdE6629e20A11a1ed14FA",  # Core
         },
         "aave_atokens": {
-            1116: "0x58e95162dBc71650BCac4AeAD39fe2d758Fc967C",  # aCoreSOLVBTC
+            1116: "0xC995f5420E42842A5499d809dedad4F18EAa538D",  # aCoreSOLVBTC
         },
         "coingeckoId": "solvbtc",
     },
