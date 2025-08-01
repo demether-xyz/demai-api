@@ -353,6 +353,70 @@ async def run_due_tasks(request: RunTasksRequest):
         logger.error(f"Error running tasks: {e}")
         raise HTTPException(status_code=500, detail="Failed to run tasks")
 
+@app.get("/{chain_id}/swap")
+async def swap_endpoint(
+    chain_id: int,
+    src: str,
+    dst: str,
+    amount: str,
+    slippage: float = 1.0,
+    from_addr: str = None  # Using from_addr since 'from' is a Python keyword
+):
+    """
+    Get swap quote and transaction data for token swap via AKKA
+    
+    Args:
+        chain_id: Blockchain network ID
+        src: Source token address
+        dst: Destination token address  
+        amount: Amount to swap in smallest unit (wei)
+        slippage: Slippage tolerance as percentage (default 1.0)
+        from_addr: Address initiating the swap (optional)
+        
+    Returns:
+        Swap quote and transaction data
+    """
+    try:
+        # Import here to avoid circular imports
+        from strategies.akka_strategy import get_akka_quote
+        
+        # Convert slippage from percentage to decimal
+        slippage_decimal = slippage / 100.0
+        
+        # Convert amount to integer
+        try:
+            amount_int = int(amount)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid amount format")
+        
+        # Get quote from AKKA
+        quote_data = await get_akka_quote(
+            chain_id=chain_id,
+            src_token=src,
+            dst_token=dst,
+            amount=amount_int,
+            slippage=slippage_decimal
+        )
+        
+        if not quote_data:
+            raise HTTPException(status_code=500, detail="Failed to get swap quote from AKKA")
+        
+        return {
+            "success": True,
+            "quote": quote_data,
+            "chain_id": chain_id,
+            "src": src,
+            "dst": dst,
+            "amount": amount,
+            "slippage": slippage
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in swap endpoint: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
 if __name__ == "__main__":
     import uvicorn
 
