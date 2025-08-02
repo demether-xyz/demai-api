@@ -699,18 +699,15 @@ def withdraw_from_aave_sync(
 # ===========================================
 
 def create_aave_tool(
-    chain_name: str,
     vault_address: str,
     private_key: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Create an Aave tool builder function that returns LLM-callable functions.
     
-    This follows the subtool pattern where configuration is done at creation time,
-    and the returned function has minimal parameters for LLM use.
+    This allows the LLM to specify the chain as a parameter.
     
     Args:
-        chain_name: Name of the blockchain network (e.g., "Arbitrum", "Core")
         vault_address: Address of the vault to operate from
         private_key: Optional private key (defaults to PRIVATE_KEY env var)
         
@@ -727,34 +724,18 @@ def create_aave_tool(
         if not private_key:
             raise ValueError("PRIVATE_KEY not provided and not found in environment")
     
-    # Find chain_id from chain_name
-    chain_id = None
-    for c_id, config in CHAIN_CONFIG.items():
-        if config["name"].lower() == chain_name.lower():
-            chain_id = c_id
-            break
-    
-    if chain_id is None:
-        raise ValueError(f"Unknown chain name: {chain_name}")
-    
-    # Get RPC URL
-    rpc_url = RPC_ENDPOINTS.get(chain_id)
-    if not rpc_url:
-        raise ValueError(f"RPC URL not found for chain ID: {chain_id}")
-    
-    # Create the LLM-callable function with minimal parameters
+    # Create the LLM-callable function with chain as a parameter
     async def aave_operation(
+        chain_name: str,
         token_symbol: str,
         amount: float,
         action: str = "supply"
     ) -> str:
         """
-        Execute Aave lending operation (supply or withdraw).
-        
-        This is a simple LLM-friendly interface that accepts only essential parameters.
-        All configuration (chain, vault, keys) is handled at tool creation time.
+        Execute Aave lending operation (supply or withdraw) on specified chain.
         
         Args:
+            chain_name: Name of the blockchain network (e.g., "Arbitrum", "Core")
             token_symbol: Symbol of the token (e.g., "USDC", "USDT")
             amount: Amount in human-readable format (e.g., 100.5)
             action: Operation to perform - "supply" or "withdraw"
@@ -763,6 +744,27 @@ def create_aave_tool(
             JSON string with operation result including transaction hash
         """
         try:
+            # Find chain_id from chain_name
+            chain_id = None
+            for c_id, config in CHAIN_CONFIG.items():
+                if config["name"].lower() == chain_name.lower():
+                    chain_id = c_id
+                    break
+            
+            if chain_id is None:
+                return json.dumps({
+                    "status": "error",
+                    "message": f"Unknown chain name: {chain_name}. Supported chains: Core, Arbitrum"
+                })
+            
+            # Get RPC URL
+            rpc_url = RPC_ENDPOINTS.get(chain_id)
+            if not rpc_url:
+                return json.dumps({
+                    "status": "error",
+                    "message": f"RPC URL not found for chain: {chain_name}"
+                })
+            
             # Validate action
             if action not in ["supply", "withdraw"]:
                 return json.dumps({
@@ -801,7 +803,7 @@ def create_aave_tool(
                     asset_address=asset_address,
                     amount=amount_wei
                 )
-                message = f"Successfully supplied {amount} {token_symbol} to Aave"
+                message = f"Successfully supplied {amount} {token_symbol} to Aave on {chain_name}"
             else:  # withdraw
                 tx_hash = await withdraw_from_aave(
                     executor=executor,
@@ -810,7 +812,7 @@ def create_aave_tool(
                     asset_address=asset_address,
                     amount=amount_wei
                 )
-                message = f"Successfully withdrew {amount} {token_symbol} from Aave"
+                message = f"Successfully withdrew {amount} {token_symbol} from Aave on {chain_name}"
             
             return json.dumps({
                 "status": "success",
@@ -837,10 +839,10 @@ def create_aave_tool(
         "tool": aave_operation,
         "metadata": {
             "name": "aave_lending",
-            "description": f"Supply or withdraw tokens on Aave V3 ({chain_name})",
-            "chain": chain_name,
+            "description": "Supply or withdraw tokens on Aave V3 (supports Core and Arbitrum chains)",
             "vault": vault_address,
             "parameters": {
+                "chain_name": "Blockchain network: 'Core' or 'Arbitrum'",
                 "token_symbol": "Token to operate with (e.g., USDC, USDT)",
                 "amount": "Amount in human-readable format",
                 "action": "Operation type: 'supply' or 'withdraw'"
