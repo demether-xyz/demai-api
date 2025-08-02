@@ -451,6 +451,9 @@ class PortfolioService:
                 
                 if result and "data" in result and "timestamp" in result:
                     cached_timestamp = result["timestamp"]
+                    # Ensure timestamp is timezone-aware
+                    if cached_timestamp.tzinfo is None:
+                        cached_timestamp = cached_timestamp.replace(tzinfo=timezone.utc)
                     is_db_stale = datetime.datetime.now(timezone.utc) - cached_timestamp > self.cache_ttl
                     
                     if not is_db_stale:
@@ -514,6 +517,10 @@ class PortfolioService:
         chains_data = {}
         
         for holding in token_holdings:
+            # Skip tokens with zero or missing USD value
+            if holding.get("value_usd", 0) == 0:
+                continue
+                
             chain_id = holding["chain_id"]
             if chain_id not in chains_data:
                 chains_data[chain_id] = {
@@ -579,8 +586,11 @@ class PortfolioService:
                 "value_usd": holding.get("value_usd", 0)
             }
 
+        # Count only tokens with non-zero value
+        valued_tokens = [h for h in token_holdings if h.get("value_usd", 0) > 0]
+        
         summary = {
-            "total_tokens": len(token_holdings),
+            "total_tokens": len(valued_tokens),
             "active_assets": list(assets_data.keys()),
             "active_chains": list(chains_data.keys())
         }
@@ -592,7 +602,7 @@ class PortfolioService:
             "chains": {v["chain_name"]: v for _, v in chains_data.items()},
             "assets": assets_data,
             "summary": summary,
-            "holdings": token_holdings + asset_holdings  # Add holdings for detailed balance lookup
+            "holdings": valued_tokens + asset_holdings  # Add holdings for detailed balance lookup
         }
 
     async def _get_token_prices_async(self, coingecko_ids: List[str]) -> Dict[str, float]:
@@ -929,7 +939,8 @@ class PortfolioService:
         for holding in holdings:
             chain_id = holding.get('chain_id')
             chain_name = chain_names.get(chain_id, f'Chain {chain_id}')
-            symbol = holding.get('symbol', 'Unknown')
+            # Handle both 'symbol' (for regular tokens) and 'token_symbol' (for strategy tokens like aTokens)
+            symbol = holding.get('symbol') or holding.get('token_symbol', 'Unknown')
             balance = holding.get('balance', 0)
             value_usd = holding.get('value_usd', 0)
             holding_type = holding.get('type', 'token')
@@ -940,7 +951,8 @@ class PortfolioService:
                     "chain_id": chain_id,
                     "total_value_usd": 0,
                     "tokens": {},
-                    "assets": {}
+                    "assets": {},
+                    "strategies": {}  # Add strategies key
                 }
             
             # Add to chain total

@@ -419,7 +419,9 @@ async def get_aave_strategy_balances(
                     "balance": balance,
                     "decimals": token_info["decimals"],
                     "atoken_address": atoken_address,
-                    "current_apy": yield_data.get("supply_apy", 0) if "error" not in yield_data else 0
+                    "current_apy": yield_data.get("supply_apy", 0) if "error" not in yield_data else 0,
+                    "coingeckoId": token_info.get("coingeckoId"),  # Include underlying token's coingecko ID for pricing
+                    "type": "strategy"  # Mark as strategy holding
                 }
                 
                 balances.append(balance_info)
