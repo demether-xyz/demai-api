@@ -20,18 +20,18 @@ import httpx
 logger = logging.getLogger(__name__)
 
 # Default slippage tolerance for swaps (3%)
-DEFAULT_SLIPPAGE = 0.05
+DEFAULT_SLIPPAGE = 0.03
 
 # Use Akka swap API instead of quote-based approach
 # If True: Uses /swap API (requires pre-approval from vault to router)
 # If False: Uses /pks-quote API (no pre-approval needed, approvals handled internally)
 USE_SWAP_API = False
 
-# Default gas limit for swap operations (800k based on successful txs)
-DEFAULT_SWAP_GAS_LIMIT = 800000
+# Default gas limit for swap operations
+DEFAULT_SWAP_GAS_LIMIT = 1_500_000
 
 # Default gas limit for approval operations
-DEFAULT_APPROVAL_GAS_LIMIT = 100000
+DEFAULT_APPROVAL_GAS_LIMIT = 200000
 
 # Akka router contract addresses
 AKKA_STRATEGY_CONTRACTS = {
