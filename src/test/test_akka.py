@@ -9,7 +9,7 @@ import asyncio
 import os
 import logging
 from strategies.strategies import StrategyExecutor
-from strategies.akka_strategy import execute_akka_swap, get_akka_swap_estimate
+from strategies.akka_strategy import execute_akka_swap, get_akka_swap_estimate, approve_vault_token_for_akka
 from config import SUPPORTED_TOKENS, CHAIN_CONFIG
 
 # --- Test Configuration ---
@@ -21,14 +21,19 @@ TEST_CHAIN_ID = 1116  # Core
 TEST_VAULT_ADDRESS = "0x25bA533C8BD1a00b1FA4cD807054d03e168dff92"
 
 # Swap parameters
-TEST_SRC_TOKEN = "USDT"
-TEST_DST_TOKEN = "SOLVBTC"
-TEST_SWAP_AMOUNT = 0.1  # 0.1 USDT
+TEST_SRC_TOKEN = "USDC"
+TEST_DST_TOKEN = "USDT"
+TEST_SWAP_AMOUNT = 0.001  # 0.1 USDT
 TEST_SLIPPAGE = 0.01  # 1% slippage
 
 # Operations to perform
 ENABLE_QUOTE = True
-ENABLE_SWAP = False  # Set to True to execute actual swap
+ENABLE_APPROVAL = False  # Set to True to approve tokens from vault to Akka
+ENABLE_SWAP = True  # Set to True to execute actual swap
+USE_SWAP_API = True  # Set to True to use swap API (requires approval first)
+
+# Approval amount (set higher than swap amount for multiple swaps)
+APPROVAL_AMOUNT = 1.0  # 1.0 USDC
 
 # --- End Test Configuration ---
 
@@ -95,6 +100,24 @@ async def example_usage():
     amount_in_wei = int(TEST_SWAP_AMOUNT * (10**src_decimals))
 
     try:
+        if ENABLE_APPROVAL:
+            logging.info(f"\nApproving {APPROVAL_AMOUNT} {TEST_SRC_TOKEN} from vault to Akka router...")
+            
+            approval_amount_wei = int(APPROVAL_AMOUNT * (10**src_decimals))
+            approval_tx = await approve_vault_token_for_akka(
+                executor=executor,
+                vault_address=TEST_VAULT_ADDRESS,
+                token_address=src_token_address,
+                amount=approval_amount_wei,
+                chain_id=TEST_CHAIN_ID
+            )
+            
+            logging.info(f"Approval transaction successful. Hash: {approval_tx}")
+            logging.info("Waiting for confirmation before proceeding...")
+            await asyncio.sleep(5)  # Wait for block confirmation
+        else:
+            logging.info("\nToken approval disabled. Set ENABLE_APPROVAL=True to approve tokens.")
+            
         if ENABLE_QUOTE:
             logging.info(f"\nGetting quote for swapping {TEST_SWAP_AMOUNT} {TEST_SRC_TOKEN} to {TEST_DST_TOKEN}...")
             
@@ -125,6 +148,11 @@ async def example_usage():
         if ENABLE_SWAP:
             logging.info(f"\nAttempting to swap {TEST_SWAP_AMOUNT} {TEST_SRC_TOKEN} to {TEST_DST_TOKEN}...")
             
+            if USE_SWAP_API:
+                logging.info("Using Akka swap API (requires vault approval)...")
+            else:
+                logging.info("Using quote-based approach (no vault approval needed)...")
+            
             tx_hash = await execute_akka_swap(
                 executor=executor,
                 chain_id=TEST_CHAIN_ID,
@@ -132,7 +160,8 @@ async def example_usage():
                 src_token=src_token_address,
                 dst_token=dst_token_address,
                 amount=amount_in_wei,
-                slippage=TEST_SLIPPAGE
+                slippage=TEST_SLIPPAGE,
+                use_swap_api=USE_SWAP_API
             )
             
             logging.info(f"Swap transaction successful. Hash: {tx_hash}")

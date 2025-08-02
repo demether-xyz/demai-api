@@ -22,6 +22,21 @@ AKKA_STRATEGY_CONTRACTS = {
     }
 }
 
+# Vault ABI for approveToken function
+VAULT_APPROVE_ABI = [
+    {
+        "inputs": [
+            {"internalType": "address", "name": "token", "type": "address"},
+            {"internalType": "address", "name": "spender", "type": "address"},
+            {"internalType": "uint256", "name": "amount", "type": "uint256"}
+        ],
+        "name": "approveToken",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    }
+]
+
 # Akka API endpoints
 AKKA_API_BASE = "https://routerv2.akka.finance/v2"
 
@@ -33,6 +48,64 @@ AKKA_STRATEGY_FUNCTIONS = {
         "requires_approval": True
     }
 }
+
+async def approve_vault_token_for_akka(
+    executor,  # StrategyExecutor instance
+    vault_address: str,
+    token_address: str,
+    amount: int,
+    chain_id: int
+) -> str:
+    """
+    Approve token from vault to Akka router
+    
+    Args:
+        executor: StrategyExecutor instance
+        vault_address: Vault contract address
+        token_address: Token to approve
+        amount: Amount to approve in smallest unit
+        chain_id: Chain ID
+        
+    Returns:
+        Transaction hash
+    """
+    try:
+        if chain_id not in AKKA_STRATEGY_CONTRACTS:
+            raise ValueError(f"Akka not supported on chain {chain_id}")
+            
+        akka_router = AKKA_STRATEGY_CONTRACTS[chain_id]["router"]
+        
+        # Get vault contract
+        vault_contract = executor.w3.eth.contract(
+            address=Web3.to_checksum_address(vault_address),
+            abi=VAULT_APPROVE_ABI
+        )
+        
+        # Build transaction
+        nonce = await executor.w3.eth.get_transaction_count(executor.account.address)
+        gas_price = await executor.w3.eth.gas_price
+        
+        transaction = await vault_contract.functions.approveToken(
+            Web3.to_checksum_address(token_address),
+            Web3.to_checksum_address(akka_router),
+            amount
+        ).build_transaction({
+            'from': executor.account.address,
+            'nonce': nonce,
+            'gas': 100000,
+            'gasPrice': gas_price,
+        })
+        
+        # Sign and send transaction
+        signed_txn = executor.w3.eth.account.sign_transaction(transaction, executor.account.key)
+        tx_hash = await executor.w3.eth.send_raw_transaction(signed_txn.raw_transaction)
+        
+        logger.info(f"Approved {amount} of token {token_address} from vault {vault_address} to Akka router {akka_router}. TX: {tx_hash.hex()}")
+        return tx_hash.hex()
+        
+    except Exception as e:
+        logger.error(f"Error approving token for Akka: {e}")
+        raise
 
 async def get_akka_quote(
     chain_id: int,
@@ -75,6 +148,53 @@ async def get_akka_quote(
                 
     except Exception as e:
         logger.error(f"Error getting Akka quote: {e}")
+        return None
+
+async def get_akka_swap_transaction(
+    chain_id: int,
+    src_token: str,
+    dst_token: str,
+    amount: int,
+    from_address: str,
+    slippage: float = 0.01
+) -> Optional[Dict[str, Any]]:
+    """
+    Get swap transaction from Akka API
+    
+    Args:
+        chain_id: Chain ID
+        src_token: Source token address
+        dst_token: Destination token address
+        amount: Amount to swap in smallest unit
+        from_address: Address that will execute the swap
+        slippage: Slippage tolerance (default 1%)
+        
+    Returns:
+        Transaction data or None if error
+    """
+    try:
+        url = f"{AKKA_API_BASE}/{chain_id}/swap"
+        params = {
+            "src": src_token,
+            "dst": dst_token,
+            "amount": str(amount),
+            "from": from_address,
+            "slippage": int(slippage * 100)  # Convert to basis points
+        }
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(url, params=params)
+            
+            if response.status_code == 200:
+                swap_data = response.json()
+                logger.info(f"Got Akka swap transaction for {amount} {src_token} -> {dst_token}")
+                return swap_data
+            else:
+                logger.error(f"Failed to get Akka swap transaction: {response.status_code} - {response.text}")
+                return None
+                
+    except Exception as e:
+        logger.error(f"Error getting Akka swap transaction: {e}")
         return None
 
 
@@ -190,7 +310,8 @@ async def execute_akka_swap(
     dst_token: str,
     amount: int,
     slippage: float = 0.01,
-    gas_limit: Optional[int] = None
+    gas_limit: Optional[int] = None,
+    use_swap_api: bool = False
 ) -> str:
     """
     Execute token swap via Akka
@@ -204,32 +325,57 @@ async def execute_akka_swap(
         amount: Amount to swap in smallest unit
         slippage: Slippage tolerance (default 1%)
         gas_limit: Optional gas limit override
+        use_swap_api: If True, use swap API (requires pre-approval)
         
     Returns:
         Transaction hash
     """
-    # Get quote from Akka
-    quote_data = await get_akka_quote(
-        chain_id, src_token, dst_token, amount, slippage
-    )
-    if not quote_data:
-        raise ValueError("Failed to get Akka quote")
+    if use_swap_api:
+        # Try to use the swap API (requires vault to have approved Akka router)
+        swap_tx_data = await get_akka_swap_transaction(
+            chain_id, src_token, dst_token, amount, vault_address, slippage
+        )
+        if swap_tx_data and "tx" in swap_tx_data and "data" in swap_tx_data["tx"]:
+            # Extract calldata from the transaction
+            calldata_hex = swap_tx_data["tx"]["data"]
+            if isinstance(calldata_hex, str) and calldata_hex.startswith("0x"):
+                call_data = bytes.fromhex(calldata_hex[2:])
+            else:
+                raise ValueError("Invalid calldata format from Akka API")
+                
+            # Get the router address
+            if "to" in swap_tx_data["tx"]:
+                target_contract = swap_tx_data["tx"]["to"]
+            else:
+                if chain_id not in AKKA_STRATEGY_CONTRACTS:
+                    raise ValueError(f"Akka strategy not supported on chain {chain_id}")
+                target_contract = AKKA_STRATEGY_CONTRACTS[chain_id]["router"]
+                
+            logger.info("Using Akka swap API for transaction")
+        else:
+            logger.warning("Swap API failed, falling back to quote-based approach")
+            use_swap_api = False
     
-    # Construct calldata from quote
-    call_data = _construct_akka_swap_calldata(quote_data, vault_address)
-    
-    # Get the router address
-    if chain_id not in AKKA_STRATEGY_CONTRACTS:
-        raise ValueError(f"Akka strategy not supported on chain {chain_id}")
-    target_contract = AKKA_STRATEGY_CONTRACTS[chain_id]["router"]
+    if not use_swap_api:
+        # Fallback to quote-based approach
+        quote_data = await get_akka_quote(
+            chain_id, src_token, dst_token, amount, slippage
+        )
+        if not quote_data:
+            raise ValueError("Failed to get Akka quote")
+        
+        # Construct calldata from quote
+        call_data = _construct_akka_swap_calldata(quote_data, vault_address)
+        
+        # Get the router address
+        if chain_id not in AKKA_STRATEGY_CONTRACTS:
+            raise ValueError(f"Akka strategy not supported on chain {chain_id}")
+        target_contract = AKKA_STRATEGY_CONTRACTS[chain_id]["router"]
+        
+        logger.info("Using quote-based approach for transaction")
     
     # Construct approvals based on source token
     approvals = [(Web3.to_checksum_address(src_token), amount)]
-    
-    # Check if swap requires ETH
-    value = int(quote_data.get("swapData", {}).get("value", 0))
-    if value > 0:
-        logger.warning(f"Akka swap requires {value} wei ETH value, but vault executeStrategy doesn't support ETH transfers")
     
     return await executor.execute_strategy(
         vault_address=vault_address,
@@ -484,4 +630,97 @@ def get_akka_swap_quote(
         
     except Exception as e:
         logger.error(f"Error in get_akka_swap_quote: {e}")
+        return json.dumps({"status": "error", "message": f"An unexpected error occurred: {str(e)}"})
+
+def approve_vault_for_akka(
+    token_symbol: str,
+    amount: float,
+    chain_name: str,
+    vault_address: str
+) -> str:
+    """
+    Approve tokens from vault to Akka router.
+    This is a synchronous function for LangChain compatibility.
+    
+    Args:
+        token_symbol: Symbol of token to approve (e.g., "USDC")
+        amount: Amount to approve (human-readable format)
+        chain_name: Name of the blockchain network (e.g., "Core")
+        vault_address: Address of the vault
+        
+    Returns:
+        JSON string indicating success or failure with transaction hash
+    """
+    try:
+        # Import here to avoid circular imports
+        from config import SUPPORTED_TOKENS, CHAIN_CONFIG, RPC_ENDPOINTS
+        from strategies.strategies import StrategyExecutor
+        
+        # Get private key from environment variable
+        PRIVATE_KEY = os.getenv("PRIVATE_KEY")
+        if not PRIVATE_KEY:
+            return json.dumps({"status": "error", "message": "PRIVATE_KEY environment variable not set"})
+        
+        # Find chain_id from chain_name
+        chain_id = None
+        for c_id, config in CHAIN_CONFIG.items():
+            if config["name"].lower() == chain_name.lower():
+                chain_id = c_id
+                break
+                
+        if chain_id is None:
+            return json.dumps({"status": "error", "message": f"Unknown chain name: {chain_name}"})
+        
+        # Get token details
+        token_config = SUPPORTED_TOKENS.get(token_symbol.upper())
+        if not token_config:
+            return json.dumps({"status": "error", "message": f"Unsupported token: {token_symbol}"})
+        
+        token_address = token_config["addresses"].get(chain_id)
+        if not token_address:
+            return json.dumps({"status": "error", "message": f"Token {token_symbol} not available on {chain_name}"})
+        
+        # Convert amount to smallest unit
+        decimals = token_config["decimals"]
+        amount_wei = int(amount * (10 ** decimals))
+        
+        # Get RPC URL and initialize executor
+        rpc_url = RPC_ENDPOINTS.get(chain_id)
+        if not rpc_url:
+            return json.dumps({"status": "error", "message": f"RPC URL not found for chain ID: {chain_id}"})
+        
+        executor = StrategyExecutor(rpc_url, PRIVATE_KEY)
+        
+        # Run the async approve function synchronously
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            tx_hash = loop.run_until_complete(approve_vault_token_for_akka(
+                executor=executor,
+                vault_address=vault_address,
+                token_address=token_address,
+                amount=amount_wei,
+                chain_id=chain_id
+            ))
+        finally:
+            loop.close()
+            
+        if tx_hash:
+            return json.dumps({
+                "status": "success",
+                "message": "Approval transaction sent!",
+                "tx_hash": tx_hash,
+                "details": {
+                    "token": token_symbol,
+                    "amount": amount,
+                    "vault": vault_address,
+                    "spender": AKKA_STRATEGY_CONTRACTS[chain_id]["router"],
+                    "chain": chain_name
+                }
+            })
+        else:
+            return json.dumps({"status": "error", "message": "Failed to send approval transaction"})
+            
+    except Exception as e:
+        logger.error(f"Error in approve_vault_for_akka: {e}")
         return json.dumps({"status": "error", "message": f"An unexpected error occurred: {str(e)}"})
