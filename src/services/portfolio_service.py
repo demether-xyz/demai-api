@@ -901,14 +901,14 @@ class PortfolioService:
         return all_asset_balances
     
 
-    async def get_portfolio_for_llm(self, vault_address: Optional[str] = None, wallet_address: Optional[str] = None, refresh: bool = True) -> Dict[str, Any]:
+    async def get_portfolio_for_llm(self, vault_address: Optional[str] = None, wallet_address: Optional[str] = None, refresh: bool = False) -> Dict[str, Any]:
         """
         Get portfolio data organized for LLM consumption - structured by chains, strategies, tokens, amounts
         
         Args:
             vault_address: Vault address to query
             wallet_address: Wallet address to resolve to vault
-            refresh: If True, bypass cache and fetch fresh data (default: True for LLM)
+            refresh: If True, bypass cache and fetch fresh data (default: False to use cache)
         """
         portfolio_summary = await self.get_portfolio_summary(vault_address=vault_address, wallet_address=wallet_address, refresh=refresh)
         

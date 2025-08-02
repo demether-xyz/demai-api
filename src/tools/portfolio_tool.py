@@ -61,7 +61,7 @@ def create_portfolio_tool(
         """
         try:
             # Get portfolio summary for the configured vault
-            # Note: get_portfolio_for_llm defaults to refresh=True to always get fresh data
+            # Note: get_portfolio_for_llm defaults to refresh=False to use cached data when available
             portfolio_data = await portfolio_service.get_portfolio_for_llm(
                 vault_address=vault_address
             )
