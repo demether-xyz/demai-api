@@ -6,7 +6,7 @@ from web3.middleware import ExtraDataToPOAMiddleware
 from web3.providers.rpc import AsyncHTTPProvider
 from eth_account import Account
 from config import logger
-from tools.strategy_config import STRATEGY_CONTRACTS, STRATEGY_FUNCTIONS
+# Strategy config import removed - no longer needed
 
 
 # Contract ABIs - minimal required for strategy execution
