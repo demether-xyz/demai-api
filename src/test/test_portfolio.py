@@ -2,6 +2,7 @@
 
 import os
 import asyncio
+import time
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -9,6 +10,9 @@ load_dotenv()
 
 # Vault address to check - modify this to test different addresses
 VAULT_ADDRESS = "0x25bA533C8BD1a00b1FA4cD807054d03e168dff92"
+
+# Test configuration
+TEST_BATCH_PERFORMANCE = True  # Set to True to compare performance
 
 async def check_portfolio():
     """Check portfolio for the specified vault address"""
@@ -24,8 +28,24 @@ async def check_portfolio():
         # Initialize portfolio service
         portfolio_service = PortfolioService(db)
         
-        # Get portfolio summary
+        # Clear any existing cache to ensure fair comparison
+        await portfolio_service.clear_portfolio_cache(VAULT_ADDRESS)
+        
+        # Test with batch balance queries (new optimized method)
+        print("\n📊 Testing with BATCH balance queries...")
+        start_time = time.time()
         result = await portfolio_service.get_portfolio_summary(VAULT_ADDRESS)
+        batch_time = time.time() - start_time
+        print(f"⏱️  Batch query time: {batch_time:.2f} seconds")
+        
+        if TEST_BATCH_PERFORMANCE:
+            # Clear cache again for fair comparison
+            await portfolio_service.clear_portfolio_cache(VAULT_ADDRESS)
+            
+            # For comparison, we would need to have kept the old method
+            # Since we removed it, we'll just show the batch performance
+            print(f"\n✨ Batch balance queries completed in {batch_time:.2f}s")
+            print("📈 This uses 1 RPC call per chain instead of 1 per token per chain!")
         
         # Close MongoDB connection
         await mongo_connection.disconnect()
@@ -33,9 +53,13 @@ async def check_portfolio():
         print(f"✅ Portfolio summary completed!")
         print(f"📊 Total value: ${result['total_value_usd']:.6f}")
         
+        # Import token config to show comprehensive breakdown
+        from config import SUPPORTED_TOKENS, CHAIN_CONFIG
+        
         summary = result.get('summary', {})
         chains = result.get('chains', {})
         assets = result.get('assets', {})
+        holdings = result.get('holdings', [])
         
         print(f"🏦 Chains: {len(summary.get('active_chains', []))}")
         print(f"🪙 Tokens: {summary.get('total_tokens', 0)}")
@@ -44,21 +68,92 @@ async def check_portfolio():
         if summary.get('active_assets'):
             print(f"🔗 Assets: {', '.join(summary['active_assets'])}")
         
-        # Display chain information
-        if chains:
-            print("\n🌐 Chains:")
-            for chain_name, chain_data in chains.items():
-                print(f"  • {chain_name}: ${chain_data.get('total_value_usd', 0):.6f}")
-                
-        # Display asset information (aTokens, etc.)
+        # Create a comprehensive view of all supported tokens by chain
+        print("\n🌐 Chains & All Supported Tokens:")
+        
+        # Build balance lookup from holdings
+        balance_lookup = {}
+        for holding in holdings:
+            chain_id = holding.get('chain_id')
+            symbol = holding.get('symbol')
+            if chain_id not in balance_lookup:
+                balance_lookup[chain_id] = {}
+            balance_lookup[chain_id][symbol] = {
+                'balance': holding.get('balance', 0),
+                'value_usd': holding.get('value_usd', 0)
+            }
+        
+        # Show all chains and their supported tokens
+        for chain_id, chain_config in CHAIN_CONFIG.items():
+            chain_name = chain_config['name']
+            chain_total = 0
+            
+            # Calculate chain total
+            if chain_name in chains:
+                chain_total = chains[chain_name].get('total_value_usd', 0)
+            
+            print(f"\n  • {chain_name} (Chain {chain_id}): ${chain_total:.6f}")
+            
+            # Show native currency
+            native_currency = chain_config.get('native_currency', {})
+            if native_currency:
+                native_symbol = native_currency['symbol']
+                native_balance = balance_lookup.get(chain_id, {}).get(native_symbol, {})
+                print(f"    💰 {native_symbol} (Native): {native_balance.get('balance', 0):.6f} (${native_balance.get('value_usd', 0):.6f})")
+            
+            # Show all supported ERC20 tokens for this chain
+            erc20_tokens = []
+            btc_tokens = []
+            stable_tokens = []
+            
+            for token_symbol, token_config in SUPPORTED_TOKENS.items():
+                if chain_id in token_config.get('addresses', {}):
+                    token_balance = balance_lookup.get(chain_id, {}).get(token_symbol, {})
+                    balance = token_balance.get('balance', 0)
+                    value_usd = token_balance.get('value_usd', 0)
+                    
+                    # Categorize tokens
+                    if token_symbol in ['SOLVBTC', 'BTCB', 'WBTC']:
+                        btc_tokens.append(f"{token_symbol}: {balance:.6f} (${value_usd:.6f})")
+                    elif token_symbol in ['USDC', 'USDT']:
+                        stable_tokens.append(f"{token_symbol}: {balance:.6f} (${value_usd:.6f})")
+                    else:
+                        erc20_tokens.append(f"{token_symbol}: {balance:.6f} (${value_usd:.6f})")
+            
+            # Display categorized tokens
+            if btc_tokens:
+                print("    ₿ BTC Tokens:")
+                for token_info in btc_tokens:
+                    print(f"      - {token_info}")
+            
+            if stable_tokens:
+                print("    💵 Stablecoins:")
+                for token_info in stable_tokens:
+                    print(f"      - {token_info}")
+            
+            if erc20_tokens:
+                print("    🪙 Other Tokens:")
+                for token_info in erc20_tokens:
+                    print(f"      - {token_info}")
+            
+            # Show protocol assets for this chain
+            if chain_name in chains and chains[chain_name].get('assets'):
+                print("    🏛️ Protocol Assets:")
+                for asset_key, asset_data in chains[chain_name]['assets'].items():
+                    protocol = asset_data.get('protocol', 'Unknown')
+                    asset_type = asset_data.get('asset_type', 'Unknown')
+                    total_value = asset_data.get('total_value_usd', 0)
+                    print(f"      • {protocol} {asset_type}: ${total_value:.6f}")
+                    for token_symbol, token_data in asset_data.get('tokens', {}).items():
+                        print(f"        - {token_symbol}: {token_data.get('balance', 0):.6f} (${token_data.get('value_usd', 0):.6f})")
+        
+        # Display overall protocol assets summary
         if assets:
-            print("\n💎 Protocol Assets:")
+            print("\n💎 Protocol Assets Summary:")
             for asset_name, asset_data in assets.items():
                 print(f"  • {asset_name}: ${asset_data.get('total_value_usd', 0):.6f}")
-                for token_symbol, token_data in asset_data.get('tokens', {}).items():
-                    print(f"    - {token_symbol}: {token_data.get('balance', 0):.6f} (${token_data.get('value_usd', 0):.6f})")
         else:
-            print("📭 No protocol assets found")
+            print("\n📭 No protocol assets found")
             
         if 'error' in result:
             print(f"⚠️ Error: {result['error']}")
@@ -71,5 +166,46 @@ async def check_portfolio():
         traceback.print_exc()
         return None
 
+async def check_portfolio_by_wallet():
+    """Check portfolio by wallet address (tests vault resolution)"""
+    try:
+        from services.portfolio_service import PortfolioService
+        from utils.mongo_connection import mongo_connection
+        
+        # Example wallet address - modify as needed
+        WALLET_ADDRESS = "0x1234567890123456789012345678901234567890"
+        
+        print(f"🔍 Checking portfolio for wallet: {WALLET_ADDRESS}")
+        
+        # Initialize MongoDB connection
+        db = await mongo_connection.connect()
+        
+        # Initialize portfolio service
+        portfolio_service = PortfolioService(db)
+        
+        # Get portfolio summary by wallet address
+        result = await portfolio_service.get_portfolio_summary(wallet_address=WALLET_ADDRESS)
+        
+        # Close MongoDB connection
+        await mongo_connection.disconnect()
+        
+        if result.get('vault_address'):
+            print(f"🏦 Resolved vault address: {result['vault_address']}")
+            print(f"📊 Total value: ${result['total_value_usd']:.6f}")
+        else:
+            print("❌ Could not resolve vault address")
+            
+        return result
+        
+    except Exception as e:
+        print(f"❌ Portfolio check error: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
 if __name__ == "__main__":
-    asyncio.run(check_portfolio()) 
+    # Run the main portfolio check
+    asyncio.run(check_portfolio())
+    
+    # Uncomment to test wallet address resolution
+    # asyncio.run(check_portfolio_by_wallet()) 

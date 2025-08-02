@@ -149,6 +149,24 @@ ERC20_ABI = [
 # VaultFactory contract addresses (same address on all chains due to CREATE2)
 VAULT_FACTORY_ADDRESS = "0x5C97F0a08a1c8a3Ed6C1E1dB2f7Ce08a4BFE53C7"
 
+# Vault ABI - only the methods we need
+VAULT_ABI = [
+    {
+        "inputs": [{"internalType": "address", "name": "token", "type": "address"}],
+        "name": "getTokenBalance",
+        "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [{"internalType": "address[]", "name": "tokens", "type": "address[]"}],
+        "name": "getMultipleTokenBalances",
+        "outputs": [{"internalType": "uint256[]", "name": "balances", "type": "uint256[]"}],
+        "stateMutability": "view",
+        "type": "function"
+    }
+]
+
 # VaultFactory ABI - only the methods we need
 VAULT_FACTORY_ABI = [
     {
