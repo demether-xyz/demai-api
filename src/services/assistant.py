@@ -7,6 +7,7 @@ import os
 from datetime import datetime
 from src.tools.portfolio_tool import create_portfolio_tool
 from src.tools.research_tool import create_research_tool
+from src.tools.aave_tool import create_aave_tool
 from src.utils.ai_router_tools import create_tools_agent
 from langchain_core.tools import StructuredTool
 from langchain_core.messages import HumanMessage, AIMessage
@@ -29,6 +30,7 @@ class SimpleAssistant:
         self.model = model
         self.portfolio_tool = self._create_portfolio_tool()
         self.research_tool = self._create_research_tool()
+        self.aave_tool = self._create_aave_tool()
         self.agent = None  # Will be created on first use
         self.session_handler = None  # Will be initialized when DB is available
         self.agent_id = "portfolio_assistant"  # Fixed agent ID for this assistant type
@@ -42,6 +44,11 @@ class SimpleAssistant:
         """Create the research tool."""
         research_config = create_research_tool()
         return research_config["tool"]
+    
+    def _create_aave_tool(self):
+        """Create the Aave tool."""
+        aave_config = create_aave_tool(vault_address=self.vault_address)
+        return aave_config["tool"]
     
     def _create_langchain_tools(self) -> list[StructuredTool]:
         """Create LangChain tool wrappers."""
@@ -90,11 +97,54 @@ class SimpleAssistant:
         class ResearchInput(BaseModel):
             query: str = Field(description="The research query or question to investigate")
         
+        class AaveLendingInput(BaseModel):
+            chain_name: str = Field(description="The blockchain network - 'Core' or 'Arbitrum'")
+            token_symbol: str = Field(description="The token symbol (e.g., 'USDC', 'USDT')")
+            amount: float = Field(description="The amount to supply or withdraw")
+            action: str = Field(description="The operation - 'supply' or 'withdraw'")
+        
         tools.append(StructuredTool(
             name="research",
             description="Perform web research and get real-time information on any topic",
             func=sync_research_tool,
             args_schema=ResearchInput
+        ))
+        
+        # Aave tool
+        aave_func = self.aave_tool
+        
+        # Sync wrapper for the async Aave tool
+        def sync_aave_tool(**kwargs) -> str:
+            """Execute Aave lending operation (supply or withdraw)."""
+            # Handle different parameter formats
+            if 'kwargs' in kwargs:
+                params = kwargs['kwargs']
+            else:
+                params = kwargs
+                
+            # Extract parameters
+            chain_name = params.get('chain_name') or params.get('chain')
+            token_symbol = params.get('token_symbol') or params.get('token')
+            amount = float(params.get('amount', 0))
+            action = params.get('action', 'supply')
+            
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(aave_func(
+                    chain_name=chain_name,
+                    token_symbol=token_symbol,
+                    amount=amount,
+                    action=action
+                ))
+            finally:
+                loop.close()
+        
+        tools.append(StructuredTool(
+            name="aave_lending",
+            description="Supply or withdraw tokens on Aave V3 (Arbitrum) or Colend (Core chain). Use this tool when the user wants to lend tokens to Aave/Colend or withdraw tokens from Aave/Colend.",
+            func=sync_aave_tool,
+            args_schema=AaveLendingInput
         ))
         
         return tools
@@ -127,7 +177,8 @@ class SimpleAssistant:
                 "portfolio_management": "Monitor positions and provide real-time insights on risk and opportunities", 
                 "educational_support": "Guide users through DeFi concepts with clear, accessible explanations",
                 "risk_analysis": "Provide comprehensive risk assessments and scenario simulations",
-                "cross_protocol": "Suggest strategies across multiple DeFi protocols and networks"
+                "cross_protocol": "Suggest strategies across multiple DeFi protocols and networks",
+                "defi_execution": "Execute DeFi transactions such as lending on Aave V3 for yield optimization"
             },
             
             "available_tools": [
@@ -138,6 +189,10 @@ class SimpleAssistant:
                 {
                     "name": "research", 
                     "description": "Get real-time information about DeFi protocols, market conditions, yield opportunities, and educational content"
+                },
+                {
+                    "name": "aave_lending",
+                    "description": "Supply or withdraw tokens on Aave V3 (Arbitrum) or Colend (Core chain) lending protocols to earn yield or access liquidity"
                 }
             ],
             
@@ -155,6 +210,11 @@ class SimpleAssistant:
                 "Compare current positions with market opportunities",
                 "Provide specific APY/risk metrics when relevant"
             ],
+            
+            "transaction_formatting": {
+                "Core": "When returning transaction hashes on Core chain, format as: https://scan.coredao.org/tx/{tx_hash}",
+                "Arbitrum": "When returning transaction hashes on Arbitrum, format as: https://arbiscan.io/tx/{tx_hash}"
+            },
             
             "response_format": {
                 "instructions": "IMPORTANT: Your responses must be in JSON format",
@@ -179,11 +239,31 @@ class SimpleAssistant:
     
     def _build_context_prompt(self, memory_data: dict = None) -> str:
         """Build a context prompt with current date and memory to append before user message."""
+        from src.config import SUPPORTED_TOKENS, CHAIN_CONFIG
+        
+        # Extract available tokens and their chains
+        available_tokens = {}
+        for token_symbol, token_info in SUPPORTED_TOKENS.items():
+            chains = []
+            for chain_id in token_info.get("addresses", {}):
+                if chain_id in CHAIN_CONFIG:
+                    chains.append(CHAIN_CONFIG[chain_id]["name"])
+            if chains:
+                available_tokens[token_symbol] = chains
+        
+        # Extract available chains
+        available_chains = [config["name"] for config in CHAIN_CONFIG.values()]
+        
         context_data = {
             "current_context": {
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC"),
                 "date": datetime.now().strftime("%A, %B %d, %Y"),
-                "user_memory": memory_data if memory_data else {"status": "No previous context stored"}
+                "user_memory": memory_data if memory_data else {"status": "No previous context stored"},
+                "available_defi_assets": {
+                    "chains": available_chains,
+                    "tokens_by_chain": available_tokens,
+                    "aave_tool_info": "For Aave/Colend operations, use these exact chain names and token symbols"
+                }
             }
         }
         

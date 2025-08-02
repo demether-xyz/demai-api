@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class PortfolioService:
     """Service for fetching portfolio balances and calculating total value"""
     
-    def __init__(self, db: Optional["AsyncIOMotorDatabase"] = None, cache_ttl_seconds: int = 300):
+    def __init__(self, db: Optional["AsyncIOMotorDatabase"] = None, cache_ttl_seconds: int = 60 * 15):
         # Now only accepts database directly
         self.db = db
         self.cache_ttl = datetime.timedelta(seconds=cache_ttl_seconds)
