@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from services.assistant import run_chatbot
+from src.archive.assistant import run_chatbot
 from eth_account.messages import encode_defunct
 from web3 import Web3
 from typing import Optional, List, Dict, Any
