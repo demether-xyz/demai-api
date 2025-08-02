@@ -1,8 +1,12 @@
 """
-Akka Finance strategy implementation for swapping tokens via the vault
+Token swap tool implementation for swapping tokens via the vault
 
-This module provides integration with Akka Finance for token swaps using the 
-Vault's executeStrategy function.
+This module provides a unified interface for token swaps across different chains,
+using the appropriate DEX aggregator for each chain:
+- Core: Akka Finance
+- Other chains: To be implemented
+
+The module uses the Vault's executeStrategy function for all swaps.
 """
 from typing import Optional, List, Dict, Any
 from web3 import Web3
@@ -14,6 +18,20 @@ import os
 import httpx
 
 logger = logging.getLogger(__name__)
+
+# Default slippage tolerance for swaps (3%)
+DEFAULT_SLIPPAGE = 0.05
+
+# Use Akka swap API instead of quote-based approach
+# If True: Uses /swap API (requires pre-approval from vault to router)
+# If False: Uses /pks-quote API (no pre-approval needed, approvals handled internally)
+USE_SWAP_API = False
+
+# Default gas limit for swap operations (800k based on successful txs)
+DEFAULT_SWAP_GAS_LIMIT = 800000
+
+# Default gas limit for approval operations
+DEFAULT_APPROVAL_GAS_LIMIT = 100000
 
 # Akka router contract addresses
 AKKA_STRATEGY_CONTRACTS = {
@@ -48,6 +66,55 @@ AKKA_STRATEGY_FUNCTIONS = {
         "requires_approval": True
     }
 }
+
+async def check_token_allowance(
+    executor,  # ToolExecutor instance
+    token_address: str,
+    owner_address: str,
+    spender_address: str
+) -> int:
+    """
+    Check the current allowance for a token
+    
+    Args:
+        executor: ToolExecutor instance
+        token_address: Token contract address
+        owner_address: Address that owns the tokens
+        spender_address: Address that is allowed to spend
+        
+    Returns:
+        Current allowance amount
+    """
+    try:
+        # Minimal ERC20 ABI for allowance
+        erc20_abi = [
+            {
+                "inputs": [
+                    {"name": "owner", "type": "address"},
+                    {"name": "spender", "type": "address"}
+                ],
+                "name": "allowance",
+                "outputs": [{"name": "", "type": "uint256"}],
+                "stateMutability": "view",
+                "type": "function"
+            }
+        ]
+        
+        token_contract = executor.w3.eth.contract(
+            address=Web3.to_checksum_address(token_address),
+            abi=erc20_abi
+        )
+        
+        allowance = await token_contract.functions.allowance(
+            Web3.to_checksum_address(owner_address),
+            Web3.to_checksum_address(spender_address)
+        ).call()
+        
+        return allowance
+        
+    except Exception as e:
+        logger.error(f"Error checking allowance: {e}")
+        return 0
 
 async def approve_vault_token_for_akka(
     executor,  # ToolExecutor instance
@@ -92,7 +159,7 @@ async def approve_vault_token_for_akka(
         ).build_transaction({
             'from': executor.account.address,
             'nonce': nonce,
-            'gas': 100000,
+            'gas': DEFAULT_APPROVAL_GAS_LIMIT,
             'gasPrice': gas_price,
         })
         
@@ -112,7 +179,7 @@ async def get_akka_quote(
     src_token: str,
     dst_token: str,
     amount: int,
-    slippage: float = 0.01
+    slippage: float = DEFAULT_SLIPPAGE
 ) -> Optional[Dict[str, Any]]:
     """
     Get swap quote from Akka API
@@ -122,7 +189,7 @@ async def get_akka_quote(
         src_token: Source token address
         dst_token: Destination token address
         amount: Amount to swap in smallest unit
-        slippage: Slippage tolerance (default 1%)
+        slippage: Slippage tolerance (default 5%)
         
     Returns:
         Quote data or None if error
@@ -156,7 +223,7 @@ async def get_akka_swap_transaction(
     dst_token: str,
     amount: int,
     from_address: str,
-    slippage: float = 0.01
+    slippage: float = DEFAULT_SLIPPAGE
 ) -> Optional[Dict[str, Any]]:
     """
     Get swap transaction from Akka API
@@ -167,7 +234,7 @@ async def get_akka_swap_transaction(
         dst_token: Destination token address
         amount: Amount to swap in smallest unit
         from_address: Address that will execute the swap
-        slippage: Slippage tolerance (default 1%)
+        slippage: Slippage tolerance (default 5%)
         
     Returns:
         Transaction data or None if error
@@ -231,6 +298,10 @@ def _construct_akka_swap_calldata(
     try:
         swap_data = quote_data.get("swapData", {})
         
+        # Debug logging
+        logger.info(f"Quote data keys: {quote_data.keys()}")
+        logger.info(f"SwapData keys: {swap_data.keys() if swap_data else 'None'}")
+        
         # Extract parameters from swapData
         amount_in = int(swap_data.get("amountIn", "0"))
         amount_out_min = int(swap_data.get("amountOutMin", "0"))
@@ -277,6 +348,9 @@ def _construct_akka_swap_calldata(
                     pools
                 ))
         
+        logger.info(f"Constructed {len(paths)} paths for multiPathSwap")
+        logger.info(f"AmountIn: {amount_in}, AmountOutMin: {amount_out_min}")
+        
         # Encode multiPathSwap function call
         function_selector = Web3.keccak(text="multiPathSwap(uint256,uint256,(uint256,uint256,uint256,uint256,(address,address,address,uint256,uint256,uint256,uint256,uint256,uint256)[])[],address,uint256,uint8,bytes32,bytes32)")[:4]
         
@@ -309,7 +383,7 @@ async def execute_akka_swap(
     src_token: str,
     dst_token: str,
     amount: int,
-    slippage: float = 0.01,
+    slippage: float = DEFAULT_SLIPPAGE,
     gas_limit: Optional[int] = None,
     use_swap_api: bool = False
 ) -> str:
@@ -323,7 +397,7 @@ async def execute_akka_swap(
         src_token: Source token address
         dst_token: Destination token address
         amount: Amount to swap in smallest unit
-        slippage: Slippage tolerance (default 1%)
+        slippage: Slippage tolerance (default 5%)
         gas_limit: Optional gas limit override
         use_swap_api: If True, use swap API (requires pre-approval)
         
@@ -377,6 +451,11 @@ async def execute_akka_swap(
     # Construct approvals based on source token
     approvals = [(Web3.to_checksum_address(src_token), amount)]
     
+    # Use provided gas limit or default to SWAP_GAS_LIMIT
+    if gas_limit is None:
+        gas_limit = DEFAULT_SWAP_GAS_LIMIT
+        logger.info(f"Using default gas limit: {gas_limit}")
+    
     return await executor.execute_strategy(
         vault_address=vault_address,
         target_contract=target_contract,
@@ -390,7 +469,7 @@ async def get_akka_swap_estimate(
     src_token: str,
     dst_token: str,
     amount: int,
-    slippage: float = 0.01
+    slippage: float = DEFAULT_SLIPPAGE
 ) -> Dict[str, Any]:
     """
     Get swap estimate from Akka without executing
@@ -400,7 +479,7 @@ async def get_akka_swap_estimate(
         src_token: Source token address
         dst_token: Destination token address
         amount: Amount to swap in smallest unit
-        slippage: Slippage tolerance (default 1%)
+        slippage: Slippage tolerance (default 5%)
         
     Returns:
         Dictionary with swap estimate details
@@ -440,7 +519,7 @@ def swap_tokens_via_akka(
     amount: float,
     chain_name: str,
     vault_address: str,
-    slippage: float = 0.01
+    slippage: float = DEFAULT_SLIPPAGE
 ) -> str:
     """
     Swap tokens using Akka Finance on a specified chain.
@@ -452,7 +531,7 @@ def swap_tokens_via_akka(
         amount: Amount to swap (human-readable format)
         chain_name: Name of the blockchain network (e.g., "Arbitrum")
         vault_address: Address of the vault initiating the swap
-        slippage: Slippage tolerance (default 1%)
+        slippage: Slippage tolerance (default 5%)
         
     Returns:
         JSON string indicating success or failure with transaction hash
@@ -724,3 +803,215 @@ def approve_vault_for_akka(
     except Exception as e:
         logger.error(f"Error in approve_vault_for_akka: {e}")
         return json.dumps({"status": "error", "message": f"An unexpected error occurred: {str(e)}"})
+
+
+# ===========================================
+# LLM-Friendly Interface with Subtool Pattern
+# ===========================================
+
+def create_swap_tool(
+    vault_address: str,
+    private_key: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Create a swap tool builder function that returns LLM-callable functions.
+    
+    This tool handles token swaps across different chains using the appropriate
+    DEX aggregator for each chain (e.g., Akka for Core, others for different chains).
+    
+    Args:
+        vault_address: Address of the vault to operate from
+        private_key: Optional private key (defaults to PRIVATE_KEY env var)
+        
+    Returns:
+        Dictionary containing the configured swap tool function
+    """
+    # Get configuration at tool creation time
+    from config import SUPPORTED_TOKENS, CHAIN_CONFIG, RPC_ENDPOINTS
+    from tools.tool_executor import ToolExecutor
+    
+    # Get private key
+    if not private_key:
+        private_key = os.getenv("PRIVATE_KEY")
+        if not private_key:
+            raise ValueError("PRIVATE_KEY not provided and not found in environment")
+    
+    # Create the LLM-callable function with chain as a parameter
+    async def swap_operation(
+        chain_name: str,
+        src_token: str,
+        dst_token: str,
+        amount: float
+    ) -> str:
+        """
+        Execute token swap on specified chain using the appropriate DEX aggregator.
+        This function will automatically handle approvals if needed.
+        
+        Args:
+            chain_name: Name of the blockchain network (e.g., "Core", "Arbitrum")
+            src_token: Source token symbol (e.g., "USDC")
+            dst_token: Destination token symbol (e.g., "USDT")
+            amount: Amount to swap in human-readable format (e.g., 100.5)
+            
+        Returns:
+            JSON string with swap result including transaction hash
+        """
+        try:
+            # Set default slippage internally
+            slippage = DEFAULT_SLIPPAGE
+            
+            # Find chain_id from chain_name
+            chain_id = None
+            for c_id, config in CHAIN_CONFIG.items():
+                if config["name"].lower() == chain_name.lower():
+                    chain_id = c_id
+                    break
+            
+            if chain_id is None:
+                return json.dumps({
+                    "status": "error",
+                    "message": f"Unknown chain name: {chain_name}"
+                })
+            
+            # Get RPC URL
+            rpc_url = RPC_ENDPOINTS.get(chain_id)
+            if not rpc_url:
+                return json.dumps({
+                    "status": "error",
+                    "message": f"RPC URL not found for chain: {chain_name}"
+                })
+            
+            # Check which DEX aggregator to use based on chain
+            if chain_id == 1116:  # Core chain uses Akka
+                # Continue with Akka implementation
+                pass
+            else:
+                # Other chains not yet supported for swaps
+                return json.dumps({
+                    "status": "error",
+                    "message": f"Token swaps not yet supported on {chain_name}. Currently only Core chain is supported."
+                })
+            
+            # Get source token configuration
+            src_token_config = SUPPORTED_TOKENS.get(src_token.upper())
+            if not src_token_config:
+                return json.dumps({
+                    "status": "error",
+                    "message": f"Unsupported token: {src_token}"
+                })
+            
+            src_address = src_token_config["addresses"].get(chain_id)
+            if not src_address:
+                return json.dumps({
+                    "status": "error",
+                    "message": f"Token {src_token} not available on {chain_name}"
+                })
+            
+            # Convert amount to wei
+            decimals = src_token_config["decimals"]
+            amount_wei = int(amount * (10 ** decimals))
+            
+            # Get destination token configuration
+            dst_token_config = SUPPORTED_TOKENS.get(dst_token.upper())
+            if not dst_token_config:
+                return json.dumps({
+                    "status": "error",
+                    "message": f"Unsupported destination token: {dst_token}"
+                })
+            
+            dst_address = dst_token_config["addresses"].get(chain_id)
+            if not dst_address:
+                return json.dumps({
+                    "status": "error",
+                    "message": f"Token {dst_token} not available on {chain_name}"
+                })
+            
+            # Create executor for swap
+            executor = ToolExecutor(rpc_url, private_key)
+            
+            # Use the configured approach (swap API or quote-based)
+            use_swap_api = USE_SWAP_API
+            
+            # If using swap API, we need to check/ensure approval first
+            if use_swap_api and chain_id in AKKA_STRATEGY_CONTRACTS:
+                akka_router = AKKA_STRATEGY_CONTRACTS[chain_id]["router"]
+                
+                # Check current allowance
+                current_allowance = await check_token_allowance(
+                    executor=executor,
+                    token_address=src_address,
+                    owner_address=vault_address,
+                    spender_address=akka_router
+                )
+                
+                # If allowance is insufficient, approve first
+                if current_allowance < amount_wei:
+                    logger.info(f"Swap API requires approval. Current allowance ({current_allowance}) < amount ({amount_wei})")
+                    
+                    # Approve max uint256 for convenience
+                    max_uint256 = 2**256 - 1
+                    approval_tx = await approve_vault_token_for_akka(
+                        executor=executor,
+                        vault_address=vault_address,
+                        token_address=src_address,
+                        amount=max_uint256,
+                        chain_id=chain_id
+                    )
+                    
+                    logger.info(f"Approval transaction sent: {approval_tx}")
+                    await asyncio.sleep(5)  # Wait for confirmation
+            
+            # Execute the swap
+            logger.info(f"Executing swap: {amount} {src_token} -> {dst_token} on chain {chain_id}")
+            logger.info(f"Vault: {vault_address}, Slippage: {slippage}, Use swap API: {use_swap_api}")
+            
+            tx_hash = await execute_akka_swap(
+                executor=executor,
+                chain_id=chain_id,
+                vault_address=vault_address,
+                src_token=src_address,
+                dst_token=dst_address,
+                amount=amount_wei,
+                slippage=slippage,
+                use_swap_api=use_swap_api,
+                gas_limit=DEFAULT_SWAP_GAS_LIMIT
+            )
+            
+            return json.dumps({
+                "status": "success",
+                "message": f"Successfully swapped {amount} {src_token} to {dst_token} on {chain_name}",
+                "data": {
+                    "src_token": src_token,
+                    "dst_token": dst_token,
+                    "amount": amount,
+                    "chain": chain_name,
+                    "vault": vault_address,
+                    "tx_hash": tx_hash
+                }
+            })
+            
+        except Exception as e:
+            logger.error(f"Error in swap_operation: {e}")
+            return json.dumps({
+                "status": "error",
+                "message": f"Failed to swap: {str(e)}"
+            })
+    
+    # Return the configured tool
+    return {
+        "tool": swap_operation,
+        "metadata": {
+            "name": "token_swap",
+            "description": "Execute token swaps across different chains using the best available DEX aggregator",
+            "vault": vault_address,
+            "parameters": {
+                "chain_name": "Blockchain network (e.g., 'Core', 'Arbitrum')",
+                "src_token": "Source token symbol (e.g., USDC, USDT)",
+                "dst_token": "Destination token symbol",
+                "amount": "Amount to swap in human-readable format"
+            }
+        }
+    }
+
+# Alias for backward compatibility
+create_akka_tool = create_swap_tool
