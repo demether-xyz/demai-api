@@ -8,6 +8,7 @@ from datetime import datetime
 from src.tools.portfolio_tool import create_portfolio_tool
 from src.tools.research_tool import create_research_tool
 from src.tools.aave_tool import create_aave_tool
+from src.tools.akka_tool import create_swap_tool
 from src.utils.ai_router_tools import create_tools_agent
 from langchain_core.tools import StructuredTool
 from langchain_core.messages import HumanMessage, AIMessage
@@ -31,6 +32,7 @@ class SimpleAssistant:
         self.portfolio_tool = self._create_portfolio_tool()
         self.research_tool = self._create_research_tool()
         self.aave_tool = self._create_aave_tool()
+        self.akka_tool = self._create_akka_tool()
         self.agent = None  # Will be created on first use
         self.session_handler = None  # Will be initialized when DB is available
         self.agent_id = "portfolio_assistant"  # Fixed agent ID for this assistant type
@@ -49,6 +51,11 @@ class SimpleAssistant:
         """Create the Aave tool."""
         aave_config = create_aave_tool(vault_address=self.vault_address)
         return aave_config["tool"]
+    
+    def _create_akka_tool(self):
+        """Create the Akka swap tool."""
+        akka_config = create_swap_tool(vault_address=self.vault_address)
+        return akka_config["tool"]
     
     def _create_langchain_tools(self) -> list[StructuredTool]:
         """Create LangChain tool wrappers."""
@@ -103,6 +110,12 @@ class SimpleAssistant:
             amount: float = Field(description="The amount to supply or withdraw")
             action: str = Field(description="The operation - 'supply' or 'withdraw'")
         
+        class AkkaSwapInput(BaseModel):
+            chain_name: str = Field(description="The blockchain network - currently only 'Core' is supported")
+            src_token: str = Field(description="The source token symbol to swap from (e.g., 'USDC', 'USDT')")
+            dst_token: str = Field(description="The destination token symbol to swap to")
+            amount: float = Field(description="The amount of source token to swap")
+        
         tools.append(StructuredTool(
             name="research",
             description="Perform web research and get real-time information on any topic",
@@ -147,6 +160,43 @@ class SimpleAssistant:
             args_schema=AaveLendingInput
         ))
         
+        # Akka swap tool
+        akka_func = self.akka_tool
+        
+        # Sync wrapper for the async Akka tool
+        def sync_akka_tool(**kwargs) -> str:
+            """Execute token swap using Akka Finance DEX aggregator."""
+            # Handle different parameter formats
+            if 'kwargs' in kwargs:
+                params = kwargs['kwargs']
+            else:
+                params = kwargs
+                
+            # Extract parameters
+            chain_name = params.get('chain_name') or params.get('chain')
+            src_token = params.get('src_token') or params.get('source_token')
+            dst_token = params.get('dst_token') or params.get('destination_token')
+            amount = float(params.get('amount', 0))
+            
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(akka_func(
+                    chain_name=chain_name,
+                    src_token=src_token,
+                    dst_token=dst_token,
+                    amount=amount
+                ))
+            finally:
+                loop.close()
+        
+        tools.append(StructuredTool(
+            name="akka_swap",
+            description="Swap tokens using Akka Finance DEX aggregator on Core chain. Use this tool when the user wants to swap, exchange, convert, or trade one token for another.",
+            func=sync_akka_tool,
+            args_schema=AkkaSwapInput
+        ))
+        
         return tools
     
     async def _init_agent(self):
@@ -178,7 +228,7 @@ class SimpleAssistant:
                 "educational_support": "Guide users through DeFi concepts with clear, accessible explanations",
                 "risk_analysis": "Provide comprehensive risk assessments and scenario simulations",
                 "cross_protocol": "Suggest strategies across multiple DeFi protocols and networks",
-                "defi_execution": "Execute DeFi transactions such as lending on Aave V3 for yield optimization"
+                "defi_execution": "Execute DeFi transactions such as lending on Aave V3 and swapping tokens via Akka Finance"
             },
             
             "available_tools": [
@@ -193,6 +243,10 @@ class SimpleAssistant:
                 {
                     "name": "aave_lending",
                     "description": "Supply or withdraw tokens on Aave V3 (Arbitrum) or Colend (Core chain) lending protocols to earn yield or access liquidity"
+                },
+                {
+                    "name": "akka_swap",
+                    "description": "Swap tokens using Akka Finance DEX aggregator on Core chain for best execution prices"
                 }
             ],
             
@@ -262,7 +316,8 @@ class SimpleAssistant:
                 "available_defi_assets": {
                     "chains": available_chains,
                     "tokens_by_chain": available_tokens,
-                    "aave_tool_info": "For Aave/Colend operations, use these exact chain names and token symbols"
+                    "aave_tool_info": "For Aave/Colend operations, use these exact chain names and token symbols",
+                    "akka_tool_info": "Akka Finance DEX aggregator is currently only available on Core chain"
                 }
             }
         }
