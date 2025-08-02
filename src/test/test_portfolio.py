@@ -31,21 +31,46 @@ async def check_portfolio():
         # Clear any existing cache to ensure fair comparison
         await portfolio_service.clear_portfolio_cache(VAULT_ADDRESS)
         
-        # Test with batch balance queries (new optimized method)
-        print("\n📊 Testing with BATCH balance queries...")
+        # First call - no cache (cold start)
+        print("\n📊 First call (no cache - cold start)...")
         start_time = time.time()
         result = await portfolio_service.get_portfolio_summary(VAULT_ADDRESS)
-        batch_time = time.time() - start_time
-        print(f"⏱️  Batch query time: {batch_time:.2f} seconds")
+        first_call_time = time.time() - start_time
+        print(f"⏱️  First call time: {first_call_time:.2f} seconds")
         
-        if TEST_BATCH_PERFORMANCE:
-            # Clear cache again for fair comparison
-            await portfolio_service.clear_portfolio_cache(VAULT_ADDRESS)
-            
-            # For comparison, we would need to have kept the old method
-            # Since we removed it, we'll just show the batch performance
-            print(f"\n✨ Batch balance queries completed in {batch_time:.2f}s")
-            print("📈 This uses 1 RPC call per chain instead of 1 per token per chain!")
+        # Second call - should use cache (warm start)
+        print("\n📊 Second call (using cache - warm start)...")
+        start_time = time.time()
+        result_cached = await portfolio_service.get_portfolio_summary(VAULT_ADDRESS)
+        second_call_time = time.time() - start_time
+        print(f"⏱️  Second call time: {second_call_time:.2f} seconds")
+        
+        # Calculate speedup
+        if second_call_time > 0:
+            speedup = first_call_time / second_call_time
+            print(f"\n🚀 Speedup: {speedup:.1f}x faster with cache!")
+            print(f"⚡ Time saved: {first_call_time - second_call_time:.2f} seconds")
+        
+        # Verify results are the same
+        if result['total_value_usd'] == result_cached['total_value_usd']:
+            print("✅ Cache validation: Results match perfectly!")
+        else:
+            print("⚠️  Warning: Cached results differ from original")
+        
+        # Third call - with refresh=True to bypass cache
+        print("\n📊 Third call (with refresh=True - bypass cache)...")
+        start_time = time.time()
+        result_refreshed = await portfolio_service.get_portfolio_summary(VAULT_ADDRESS, refresh=True)
+        third_call_time = time.time() - start_time
+        print(f"⏱️  Third call time (bypassing cache): {third_call_time:.2f} seconds")
+        print(f"📊 This call fetched fresh data despite cache being available")
+        
+        # Show cache statistics
+        cache_stats = await portfolio_service.get_cache_stats()
+        print(f"\n📈 Cache Statistics:")
+        print(f"  • Memory cache entries: {cache_stats['memory_cache_entries']}")
+        print(f"  • Database cache entries: {cache_stats['database_cache_entries']}")
+        print(f"  • Cache TTL: {cache_stats['cache_ttl_seconds']} seconds")
         
         # Close MongoDB connection
         await mongo_connection.disconnect()

@@ -315,10 +315,15 @@ class PortfolioService:
             logger.error(f"Traceback: {traceback.format_exc()}")
             return None
     
-    async def get_portfolio_summary(self, vault_address: Optional[str] = None, wallet_address: Optional[str] = None) -> Dict[str, Any]:
+    async def get_portfolio_summary(self, vault_address: Optional[str] = None, wallet_address: Optional[str] = None, refresh: bool = False) -> Dict[str, Any]:
         """
         Get complete portfolio summary for a vault address or wallet address including balances and USD values
         Uses optimized batch balance queries - one call per chain
+        
+        Args:
+            vault_address: Vault address to query
+            wallet_address: Wallet address to resolve to vault
+            refresh: If True, bypass cache and fetch fresh data
         """
         if not self.Web3:
             return {
@@ -354,10 +359,14 @@ class PortfolioService:
                 "summary": {"error": "Could not determine vault address"},
             }
             
-        cached_data = await self._get_from_cache(target_address)
-        if cached_data:
-            logger.info(f"Returning cached portfolio for {target_address}")
-            return cached_data
+        # Check cache only if refresh is not requested
+        if not refresh:
+            cached_data = await self._get_from_cache(target_address)
+            if cached_data:
+                logger.info(f"Returning cached portfolio for {target_address}")
+                return cached_data
+        else:
+            logger.info(f"Refresh requested, bypassing cache for {target_address}")
 
         try:
             # Use optimized batch balance query - one call per chain
@@ -882,11 +891,16 @@ class PortfolioService:
         return all_asset_balances
     
 
-    async def get_portfolio_for_llm(self, vault_address: Optional[str] = None, wallet_address: Optional[str] = None) -> Dict[str, Any]:
+    async def get_portfolio_for_llm(self, vault_address: Optional[str] = None, wallet_address: Optional[str] = None, refresh: bool = True) -> Dict[str, Any]:
         """
         Get portfolio data organized for LLM consumption - structured by chains, strategies, tokens, amounts
+        
+        Args:
+            vault_address: Vault address to query
+            wallet_address: Wallet address to resolve to vault
+            refresh: If True, bypass cache and fetch fresh data (default: True for LLM)
         """
-        portfolio_summary = await self.get_portfolio_summary(vault_address=vault_address, wallet_address=wallet_address)
+        portfolio_summary = await self.get_portfolio_summary(vault_address=vault_address, wallet_address=wallet_address, refresh=refresh)
         
         if portfolio_summary.get('error'):
             return {"error": portfolio_summary['error']}
