@@ -1,22 +1,22 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from src.archive.assistant import run_chatbot
+from src.services.assistant import run_chatbot
 from eth_account.messages import encode_defunct
 from web3 import Web3
 from typing import Optional, List, Dict, Any
 from config import logger
 from services.portfolio_service import PortfolioService
-from setup import setup
 from contextlib import asynccontextmanager
-from pancaik.core.config import get_config
+from src.utils.mongo_connection import mongo_connection
+from src.services.portfolio_data_handler import PortfolioDataHandler
 from src.archive.task_manager import TaskManager
 from src.archive.strategy_registry import register_all_strategies
 
-# Global portfolio service instance
+# Global instances
 portfolio_service = None
-# Global task manager instance
 task_manager = None
+portfolio_data_handler = None
 
 # Auth message that must match frontend DEMAI_AUTH_MESSAGE
 DEMAI_AUTH_MESSAGE = """Welcome to demAI!
@@ -28,12 +28,18 @@ This signature will not trigger any blockchain transactions or grant any token a
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup logic here
-    await setup(app)
-    
-    # Initialize global portfolio service once on startup
-    db = get_config("db")
-    if db is not None:
-        global portfolio_service, task_manager
+    # Connect to MongoDB
+    try:
+        db = await mongo_connection.connect()
+        
+        global portfolio_service, task_manager, portfolio_data_handler
+        
+        # Initialize portfolio data handler
+        portfolio_data_handler = PortfolioDataHandler(db)
+        await portfolio_data_handler.create_indexes()
+        app.state.portfolio_data_handler = portfolio_data_handler
+        
+        # Initialize portfolio service with MongoDB
         portfolio_service = PortfolioService(db, cache_ttl_seconds=300)  # 5 minute cache
         app.state.portfolio_service = portfolio_service
         logger.info("Portfolio service initialized on startup")
@@ -46,14 +52,15 @@ async def lifespan(app: FastAPI):
         register_all_strategies(task_manager)
         
         logger.info("Task manager initialized on startup")
+        
+    except Exception as e:
+        logger.error(f"Failed to initialize MongoDB connection: {e}")
+        raise
     
     yield
+    
     # Shutdown logic here
-    db = get_config("db")
-    if db is not None:
-        # Get the client instance from the database
-        client = db.client
-        client.close()
+    await mongo_connection.disconnect()
 
 app = FastAPI(lifespan=lifespan)
 

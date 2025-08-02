@@ -24,10 +24,9 @@ requests = ">=2.31.0,<3.0.0"
 aiohttp = ">=3.8.0,<4.0.0"
 python-dotenv = ">=1.0.0,<2.0.0"
 eth-abi = ">=5.0.0,<6.0.0"
-pancaik = { git = "https://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@github.com/jdorado/pancaik", branch = "v0.2" }
+motor = ">=3.3.0,<4.0.0"
 
 [tool.poetry.group.dev.dependencies]
-# pancaik = { path = "../../pancake/pancaik", develop = true }
 autoflake = "^2.3.1"
 black = "^25.1.0"
 isort = "^6.0.1"

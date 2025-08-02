@@ -2,13 +2,12 @@ import requests
 import time
 import asyncio
 import aiohttp
-from typing import Dict, List, Optional, TYPE_CHECKING, Union
+from typing import Dict, List, Optional, TYPE_CHECKING
 from datetime import datetime, timedelta
 import logging
 
 if TYPE_CHECKING:
-    from .mongo_util import MongoUtil
-    from pymongo.database import Database
+    from motor.motor_asyncio import AsyncIOMotorDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -16,16 +15,9 @@ logger = logging.getLogger(__name__)
 class CoinGeckoUtil:
     """Utility for fetching token prices from CoinGecko API with caching"""
     
-    def __init__(self, db_or_mongo_util: Optional[Union['Database', 'MongoUtil']] = None):
+    def __init__(self, db: Optional['AsyncIOMotorDatabase'] = None):
         self.base_url = "https://api.coingecko.com/api/v3"
-        
-        # Handle both database and MongoUtil for backward compatibility
-        if db_or_mongo_util is not None and hasattr(db_or_mongo_util, 'db'):  # It's a MongoUtil
-            self.mongo_util = db_or_mongo_util
-            self.db = db_or_mongo_util.db
-        else:  # It's a database directly or None
-            self.mongo_util = None
-            self.db = db_or_mongo_util
+        self.db = db
             
         self.cache_duration = timedelta(minutes=15)  # Cache for 15 minutes
         

@@ -1,16 +1,15 @@
-from typing import Dict, List, Optional, Any, TYPE_CHECKING, Union
+from typing import Dict, List, Optional, Any, TYPE_CHECKING
 from decimal import Decimal
 import logging
 import asyncio
 import datetime
 from utils.coingecko_util import CoinGeckoUtil
-from utils.mongo_util import MongoUtil
 from config import SUPPORTED_TOKENS, RPC_ENDPOINTS, NATIVE_CURRENCIES, ERC20_ABI, CHAIN_CONFIG, VAULT_FACTORY_ADDRESS, VAULT_FACTORY_ABI
-from src.archive.strategy_config import STRATEGY_BALANCE_CHECKERS
+from asset_config import ASSET_BALANCE_CHECKERS
 
 if TYPE_CHECKING:
     from web3 import Web3
-    from pymongo.database import Database
+    from motor.motor_asyncio import AsyncIOMotorDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -18,17 +17,11 @@ logger = logging.getLogger(__name__)
 class PortfolioService:
     """Service for fetching portfolio balances and calculating total value"""
     
-    def __init__(self, db_or_mongo_util: Optional[Union["Database", MongoUtil]] = None, cache_ttl_seconds: int = 300):
-        # Handle both database and MongoUtil for backward compatibility
-        if db_or_mongo_util is not None and hasattr(db_or_mongo_util, 'db'):  # It's a MongoUtil
-            self.mongo_util = db_or_mongo_util
-            self.db = db_or_mongo_util.db
-        else:  # It's a database directly or None
-            self.mongo_util = None
-            self.db = db_or_mongo_util
-            
+    def __init__(self, db: Optional["AsyncIOMotorDatabase"] = None, cache_ttl_seconds: int = 300):
+        # Now only accepts database directly
+        self.db = db
         self.cache_ttl = datetime.timedelta(seconds=cache_ttl_seconds)
-        self.coingecko = CoinGeckoUtil(self.mongo_util if self.mongo_util is not None else self.db)
+        self.coingecko = CoinGeckoUtil(self.db)
         self.web3_instances = {}
         self.Web3 = None
         
@@ -355,23 +348,23 @@ class PortfolioService:
         try:
             token_balances_task = self._get_all_token_balances(target_address)
             native_balances_task = self._get_native_balances(target_address)
-            strategy_balances_task = self._get_all_strategy_balances(target_address)
+            asset_balances_task = self._get_all_asset_balances(target_address)
 
-            all_token_balances, all_native_balances, all_strategy_balances = await asyncio.gather(
+            all_token_balances, all_native_balances, all_asset_balances = await asyncio.gather(
                 token_balances_task,
                 native_balances_task,
-                strategy_balances_task
+                asset_balances_task
             )
 
             all_holdings = all_token_balances + all_native_balances
             
             all_holdings = [h for h in all_holdings if h.get("balance") and h["balance"] > 0]
             
-            strategy_holdings = [h for h in all_strategy_balances if h.get("balance") and h["balance"] > 0]
+            asset_holdings = [h for h in all_asset_balances if h.get("balance") and h["balance"] > 0]
 
             coingecko_ids = list(set(
                 [h["coingeckoId"] for h in all_holdings if "coingeckoId" in h] +
-                [h["coingeckoId"] for h in strategy_holdings if "coingeckoId" in h]
+                [h["coingeckoId"] for h in asset_holdings if "coingeckoId" in h]
             ))
             
             token_prices = await self._get_token_prices_async(coingecko_ids)
@@ -384,7 +377,7 @@ class PortfolioService:
                     holding["value_usd"] = holding["balance"] * price
                     total_value_usd += holding["value_usd"]
             
-            for holding in strategy_holdings:
+            for holding in asset_holdings:
                 price = token_prices.get(holding.get("coingeckoId"))
                 if price:
                     holding["price_usd"] = price
@@ -394,7 +387,7 @@ class PortfolioService:
             formatted_portfolio = self._format_portfolio_output(
                 target_address, 
                 all_holdings, 
-                strategy_holdings,
+                asset_holdings,
                 total_value_usd, 
                 wallet_address
             )
@@ -489,7 +482,7 @@ class PortfolioService:
         self, 
         vault_address: str, 
         token_holdings: List[Dict], 
-        strategy_holdings: List[Dict],
+        asset_holdings: List[Dict],
         total_value_usd: float, 
         wallet_address: Optional[str] = None
     ) -> Dict[str, Any]:
@@ -503,7 +496,7 @@ class PortfolioService:
                     "chain_name": CHAIN_CONFIG.get(chain_id, {}).get("name", f"Chain {chain_id}"),
                     "total_value_usd": 0,
                     "tokens": {},
-                    "strategies": {}
+                    "assets": {}
                 }
             
             chain = chains_data[chain_id]
@@ -515,56 +508,56 @@ class PortfolioService:
                 "value_usd": holding.get("value_usd", 0)
             }
 
-        strategies_data = {}
-        for holding in strategy_holdings:
+        assets_data = {}
+        for holding in asset_holdings:
             chain_id = holding["chain_id"]
             if chain_id not in chains_data:
                  chains_data[chain_id] = {
                     "chain_name": CHAIN_CONFIG.get(chain_id, {}).get("name", f"Chain {chain_id}"),
                     "total_value_usd": 0,
                     "tokens": {},
-                    "strategies": {}
+                    "assets": {}
                 }
             
             chain = chains_data[chain_id]
             chain["total_value_usd"] += holding.get("value_usd", 0)
             
-            strategy_key = f'{holding["protocol"]}_{holding["strategy"]}'
-            if strategy_key not in strategies_data:
-                strategies_data[strategy_key] = {
+            asset_key = f'{holding["protocol"]}_{holding["strategy"]}'
+            if asset_key not in assets_data:
+                assets_data[asset_key] = {
                     "protocol": holding["protocol"],
-                    "strategy": holding["strategy"],
+                    "asset_type": holding["strategy"],
                     "total_value_usd": 0,
                     "tokens": {}
                 }
             
-            strategy = strategies_data[strategy_key]
-            strategy["total_value_usd"] += holding.get("value_usd", 0)
+            asset = assets_data[asset_key]
+            asset["total_value_usd"] += holding.get("value_usd", 0)
             
             symbol = holding["token_symbol"]
-            strategy["tokens"][symbol] = {
+            asset["tokens"][symbol] = {
                 "balance": holding["balance"],
                 "value_usd": holding.get("value_usd", 0)
             }
 
-            if strategy_key not in chain["strategies"]:
-                chain["strategies"][strategy_key] = {
+            if asset_key not in chain["assets"]:
+                chain["assets"][asset_key] = {
                     "protocol": holding["protocol"],
-                    "strategy": holding["strategy"],
+                    "asset_type": holding["strategy"],
                     "total_value_usd": 0,
                     "tokens": {}
                 }
             
-            chain_strategy = chain["strategies"][strategy_key]
-            chain_strategy["total_value_usd"] += holding.get("value_usd", 0)
-            chain_strategy["tokens"][symbol] = {
+            chain_asset = chain["assets"][asset_key]
+            chain_asset["total_value_usd"] += holding.get("value_usd", 0)
+            chain_asset["tokens"][symbol] = {
                  "balance": holding["balance"],
                 "value_usd": holding.get("value_usd", 0)
             }
 
         summary = {
             "total_tokens": len(token_holdings),
-            "active_strategies": list(strategies_data.keys()),
+            "active_assets": list(assets_data.keys()),
             "active_chains": list(chains_data.keys())
         }
 
@@ -573,7 +566,7 @@ class PortfolioService:
             "wallet_address": wallet_address,
             "total_value_usd": total_value_usd,
             "chains": {v["chain_name"]: v for k, v in chains_data.items()},
-            "strategies": strategies_data,
+            "assets": assets_data,
             "summary": summary
         }
 
@@ -667,42 +660,42 @@ class PortfolioService:
         logger.info(f"Retrieved native balances for {len(balances)} chains")
         return balances
     
-    async def _get_all_strategy_balances(self, vault_address: str) -> List[Dict[str, Any]]:
-        """Get balances for all strategies concurrently"""
+    async def _get_all_asset_balances(self, vault_address: str) -> List[Dict[str, Any]]:
+        """Get balances for all protocol assets (like aTokens) concurrently"""
         tasks = []
         
-        # Create tasks for each strategy balance checker
-        for strategy_name, balance_checker in STRATEGY_BALANCE_CHECKERS.items():
+        # Create tasks for each asset balance checker
+        for asset_type, balance_checker in ASSET_BALANCE_CHECKERS.items():
             if balance_checker is None:
-                logger.warning(f"Strategy {strategy_name} has no balance checker configured, skipping")
+                logger.warning(f"Asset type {asset_type} has no balance checker configured, skipping")
                 continue
                 
             try:
                 task = balance_checker(self.web3_instances, vault_address, SUPPORTED_TOKENS)
                 tasks.append(task) # Directly append the coroutine
             except Exception as e:
-                logger.error(f"Error creating task for {strategy_name} strategy: {e}")
+                logger.error(f"Error creating task for {asset_type} asset: {e}")
                 continue
         
-        logger.info(f"Checking strategy balances for {len(tasks)} strategies")
+        logger.info(f"Checking asset balances for {len(tasks)} asset types")
         
-        # Execute all strategy balance checks concurrently
+        # Execute all asset balance checks concurrently
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        all_strategy_balances = []
+        all_asset_balances = []
         for i, result in enumerate(results):
-            strategy_name = list(STRATEGY_BALANCE_CHECKERS.keys())[i]
+            asset_type = list(ASSET_BALANCE_CHECKERS.keys())[i]
             if isinstance(result, Exception):
-                logger.error(f"Error getting {strategy_name} strategy balances: {result}")
+                logger.error(f"Error getting {asset_type} asset balances: {result}")
                 continue
                 
-            # Result should be a list of strategy balance dictionaries
+            # Result should be a list of asset balance dictionaries
             if isinstance(result, list):
-                all_strategy_balances.extend(result)
-                logger.info(f"Found {len(result)} strategy balances from {strategy_name}")
+                all_asset_balances.extend(result)
+                logger.info(f"Found {len(result)} asset balances from {asset_type}")
         
-        logger.info(f"Retrieved total of {len(all_strategy_balances)} strategy balances")
-        return all_strategy_balances
+        logger.info(f"Retrieved total of {len(all_asset_balances)} asset balances")
+        return all_asset_balances
     
     async def _get_token_balance_async(self, vault_address: str, token_address: str, chain_id: int, token_config: Dict) -> Optional[float]:
         """Get balance for a specific ERC20 token asynchronously"""
@@ -812,7 +805,7 @@ class PortfolioService:
                     "chain_id": chain_id,
                     "total_value_usd": 0,
                     "tokens": {},
-                    "strategies": {}
+                    "assets": {}
                 }
             
             # Add to chain total
