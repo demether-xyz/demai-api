@@ -17,7 +17,7 @@ load_dotenv()
 class SimpleAssistant:
     """Simple chat assistant with portfolio capabilities."""
     
-    def __init__(self, vault_address: str, model: str = "google/gemini-2.5-flash"):
+    def __init__(self, vault_address: str, model: str = "google/gemini-2.5-pro"):
         """Initialize the assistant with a vault address."""
         self.vault_address = vault_address
         self.model = model
@@ -69,12 +69,9 @@ class SimpleAssistant:
             # System message for the agent
             system_message = """You are a helpful DeFi portfolio assistant.
 
-When the user asks about their portfolio, balances, holdings, or tokens, use the view_portfolio tool.
+When the user asks about balances, holdings, or their portfolio in any way, use the view_portfolio tool to get their complete portfolio data.
 
-After getting the portfolio data, provide a clear summary of:
-1. Total portfolio value
-2. Main holdings by chain
-3. Any notable positions"""
+Be proactive and helpful - provide the specific information they asked for along with relevant context from their portfolio."""
 
             # Execute with agent
             result = await self.agent.execute(
@@ -96,3 +93,35 @@ After getting the portfolio data, provide a clear summary of:
 async def create_assistant(vault_address: str, model: str = "google/gemini-2.5-flash") -> SimpleAssistant:
     """Create a simple assistant instance."""
     return SimpleAssistant(vault_address, model)
+
+
+# Main chatbot function expected by main.py
+async def run_chatbot(message: str, chat_id: str, vault_address: str = None) -> str:
+    """
+    Run the chatbot with a message and return the response.
+    
+    Args:
+        message: User's message
+        chat_id: Chat/user identifier (wallet address for chat history)
+        vault_address: Vault address - the unique ID for portfolio context
+    
+    Returns:
+        Assistant's response
+    """
+    try:
+        # The vault address is the unique identifier for portfolio context
+        # If no vault address provided, we can't provide portfolio functionality
+        if not vault_address:
+            return "Please provide a vault address to access portfolio features."
+        
+        # Create assistant instance with vault address as the unique ID
+        assistant = SimpleAssistant(vault_address=vault_address)
+        
+        # Process the message
+        response = await assistant.chat(message)
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error in run_chatbot: {e}")
+        return f"Sorry, I encountered an error: {str(e)}"

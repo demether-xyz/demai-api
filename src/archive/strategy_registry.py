@@ -2,7 +2,6 @@
 Strategy Registry - Register all available strategies here
 """
 from .task_manager import TaskManager
-from .hello_world_strategy import HelloWorldStrategy
 from .btc_core_strategy import BTCCoreStrategy
 
 
