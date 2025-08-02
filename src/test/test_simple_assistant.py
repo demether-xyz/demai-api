@@ -22,8 +22,6 @@ async def main():
     # Test queries
     queries = [
         "What's in my portfolio?",
-        "Show me my token balances",
-        "How much is my portfolio worth?"
     ]
     
     for query in queries:

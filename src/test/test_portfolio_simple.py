@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Simple test for portfolio JSON output - uses cache for fast testing"""
+"""Simple test for portfolio JSON output - tests the same endpoint used by frontend"""
 
 import asyncio
 import json
@@ -12,7 +12,7 @@ load_dotenv()
 VAULT_ADDRESS = "0x25bA533C8BD1a00b1FA4cD807054d03e168dff92"
 
 async def test_portfolio_json():
-    """Test portfolio JSON output for frontend endpoint"""
+    """Test portfolio JSON output for frontend endpoint (without refresh)"""
     try:
         from services.portfolio_service import PortfolioService
         from utils.mongo_connection import mongo_connection
@@ -25,52 +25,32 @@ async def test_portfolio_json():
         # Initialize portfolio service
         portfolio_service = PortfolioService(db)
         
-        # Test 1: Regular portfolio summary (used by FE endpoint)
-        print("\n📊 Frontend JSON Output (get_portfolio_summary):")
+        # Test portfolio summary without refresh (same as FE endpoint)
+        print("\n📊 Frontend JSON Output (get_portfolio_summary) - No refresh:")
         result = await portfolio_service.get_portfolio_summary(VAULT_ADDRESS)
         
-        # Show just the structure without holdings array
-        display_result = {k: v for k, v in result.items() if k != 'holdings'}
-        print(json.dumps(display_result, indent=2))
+        # Pretty print the full result
+        print(json.dumps(result, indent=2))
         
-        # Test 2: LLM-formatted output (with refresh=False to use cache)
-        print("\n🤖 LLM JSON Output (get_portfolio_for_llm) - Using cache:")
-        llm_result = await portfolio_service.get_portfolio_for_llm(vault_address=VAULT_ADDRESS, refresh=False)
-        print(json.dumps(llm_result, indent=2))
-        
-        # Verify no "Unknown" tokens in the output
-        def check_for_unknown(data, path=""):
-            issues = []
-            if isinstance(data, dict):
-                for key, value in data.items():
-                    if key == "Unknown" or value == "Unknown":
-                        issues.append(f"{path}.{key} = {value}")
-                    else:
-                        issues.extend(check_for_unknown(value, f"{path}.{key}"))
-            elif isinstance(data, list):
-                for i, item in enumerate(data):
-                    issues.extend(check_for_unknown(item, f"{path}[{i}]"))
-            return issues
-        
-        issues = check_for_unknown(llm_result)
-        if issues:
-            print("\n⚠️  Found 'Unknown' values in:")
-            for issue in issues:
-                print(f"  - {issue}")
-        else:
-            print("\n✅ No 'Unknown' tokens found in output!")
-        
-        # Show summary
+        # Show summary info
         print(f"\n📈 Summary:")
-        print(f"  Total Value: ${llm_result.get('total_value_usd', 0):.2f}")
-        print(f"  Active Chains: {', '.join(llm_result.get('summary', {}).get('active_chains', []))}")
-        print(f"  Active Strategies: {', '.join(llm_result.get('summary', {}).get('active_strategies', []))}")
-        print(f"  Total Tokens: {llm_result.get('summary', {}).get('total_tokens', 0)}")
+        print(f"  Total Value: ${result.get('total_value_usd', 0):,.2f}")
+        print(f"  Total Holdings: {len(result.get('holdings', []))}")
+        
+        # Count holdings by chain
+        holdings_by_chain = {}
+        for holding in result.get('holdings', []):
+            chain = holding.get('chain', 'Unknown')
+            holdings_by_chain[chain] = holdings_by_chain.get(chain, 0) + 1
+        
+        print(f"  Holdings by chain:")
+        for chain, count in holdings_by_chain.items():
+            print(f"    - {chain}: {count} tokens")
         
         # Close MongoDB connection
         await mongo_connection.disconnect()
         
-        return llm_result
+        return result
         
     except Exception as e:
         print(f"❌ Error: {e}")

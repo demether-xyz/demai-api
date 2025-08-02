@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 import logging
 import asyncio
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo import UpdateOne
 
 logger = logging.getLogger(__name__)
 
@@ -20,12 +21,12 @@ class CoinGeckoCacheService:
         self._cache_lock = asyncio.Lock()
         
         # Initialize database indexes
-        if self.db:
+        if self.db is not None:
             asyncio.create_task(self._ensure_indexes())
     
     async def _ensure_indexes(self):
         """Ensure database indexes exist for optimal performance"""
-        if not self.db:
+        if self.db is None:
             return
             
         try:
@@ -53,7 +54,7 @@ class CoinGeckoCacheService:
                     self._memory_cache.pop(token_id, None)
         
         # Check database cache
-        if self.db:
+        if self.db is not None:
             try:
                 collection = self.db.coingecko_price_cache
                 result = await collection.find_one({"token_id": token_id})
@@ -108,7 +109,7 @@ class CoinGeckoCacheService:
             }
         
         # Update database cache
-        if self.db:
+        if self.db is not None:
             try:
                 collection = self.db.coingecko_price_cache
                 await collection.update_one(
@@ -139,25 +140,23 @@ class CoinGeckoCacheService:
                 }
         
         # Update database cache
-        if self.db:
+        if self.db is not None:
             try:
                 collection = self.db.coingecko_price_cache
                 operations = []
                 
                 for token_id, price in prices.items():
-                    operations.append({
-                        "update_one": {
-                            "filter": {"token_id": token_id},
-                            "update": {
-                                "$set": {
-                                    "token_id": token_id,
-                                    "price": price,
-                                    "timestamp": timestamp
-                                }
-                            },
-                            "upsert": True
-                        }
-                    })
+                    operations.append(UpdateOne(
+                        {"token_id": token_id},
+                        {
+                            "$set": {
+                                "token_id": token_id,
+                                "price": price,
+                                "timestamp": timestamp
+                            }
+                        },
+                        upsert=True
+                    ))
                 
                 if operations:
                     await collection.bulk_write(operations)
@@ -181,7 +180,7 @@ class CoinGeckoCacheService:
             async with self._cache_lock:
                 self._memory_cache.pop(token_id, None)
             
-            if self.db:
+            if self.db is not None:
                 try:
                     collection = self.db.coingecko_price_cache
                     await collection.delete_one({"token_id": token_id})
@@ -193,7 +192,7 @@ class CoinGeckoCacheService:
             async with self._cache_lock:
                 self._memory_cache.clear()
             
-            if self.db:
+            if self.db is not None:
                 try:
                     collection = self.db.coingecko_price_cache
                     await collection.delete_many({})
@@ -206,7 +205,7 @@ class CoinGeckoCacheService:
         memory_size = len(self._memory_cache)
         db_size = 0
         
-        if self.db:
+        if self.db is not None:
             try:
                 collection = self.db.coingecko_price_cache
                 db_size = await collection.count_documents({})
@@ -243,7 +242,7 @@ class CoinGeckoCacheService:
             logger.info(f"Removed {len(expired_keys)} expired entries from memory cache")
         
         # Clean database cache
-        if self.db:
+        if self.db is not None:
             try:
                 collection = self.db.coingecko_price_cache
                 cutoff_time = datetime.now(timezone.utc) - self.cache_ttl
