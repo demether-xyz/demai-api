@@ -9,17 +9,21 @@ import logging
 if TYPE_CHECKING:
     from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from services.coingecko_cache_service import CoinGeckoCacheService
+
 logger = logging.getLogger(__name__)
 
 
 class CoinGeckoUtil:
-    """Utility for fetching token prices from CoinGecko API with caching"""
+    """Utility for fetching token prices from CoinGecko API with dual-layer caching"""
     
     def __init__(self, db: Optional['AsyncIOMotorDatabase'] = None):
         self.base_url = "https://api.coingecko.com/api/v3"
         self.db = db
             
-        self.cache_duration = timedelta(minutes=15)  # Cache for 15 minutes
+        self.cache_duration = timedelta(minutes=15)  # Legacy cache for 15 minutes
+        # Initialize the new 60-minute cache service
+        self.price_cache_service = CoinGeckoCacheService(db=db, cache_ttl_minutes=60)
         
     def get_token_prices(self, token_ids: List[str]) -> Dict[str, float]:
         """
@@ -53,32 +57,33 @@ class CoinGeckoUtil:
     
     async def get_token_prices_async(self, token_ids: List[str]) -> Dict[str, float]:
         """
-        Async version of get_token_prices that properly handles the event loop
+        Async version of get_token_prices that uses the 60-minute cache service
         """
-        prices = {}
-        tokens_to_fetch = []
+        if not token_ids:
+            return {}
         
-        # Check cache first
-        if self.db is not None:
-            for token_id in token_ids:
-                cached_price = await self._get_cached_price_async(token_id)
-                if cached_price:
-                    prices[token_id] = cached_price
-                else:
-                    tokens_to_fetch.append(token_id)
-        else:
-            tokens_to_fetch = token_ids
-            
-        # Fetch missing prices from API
+        # First, check the 60-minute cache
+        cached_prices = await self.price_cache_service.get_prices(token_ids)
+        
+        # Determine which tokens still need to be fetched
+        tokens_to_fetch = [tid for tid in token_ids if tid not in cached_prices]
+        
         if tokens_to_fetch:
-            fetched_prices = await self._fetch_prices_from_api_async(tokens_to_fetch)
-            prices.update(fetched_prices)
+            logger.info(f"Fetching {len(tokens_to_fetch)} token prices from API (out of {len(token_ids)} requested)")
             
-            # Cache the fetched prices
-            if self.db is not None:
-                await self._cache_prices_async(fetched_prices)
-                
-        return prices
+            # Fetch missing prices from API
+            fetched_prices = await self._fetch_prices_from_api_async(tokens_to_fetch)
+            
+            # Update the 60-minute cache with fetched prices
+            if fetched_prices:
+                await self.price_cache_service.set_prices(fetched_prices)
+            
+            # Combine cached and fetched prices
+            cached_prices.update(fetched_prices)
+        else:
+            logger.info(f"All {len(token_ids)} token prices retrieved from 60-minute cache")
+        
+        return cached_prices
     
     async def _get_cached_price_async(self, token_id: str) -> Optional[float]:
         """Async version of _get_cached_price"""
@@ -247,3 +252,11 @@ class CoinGeckoUtil:
         except Exception as e:
             logger.error(f"Error fetching prices from CoinGecko: {e}")
             return {token_id: 0.0 for token_id in token_ids}
+    
+    async def get_cache_stats(self) -> Dict[str, any]:
+        """Get cache statistics from the price cache service"""
+        return await self.price_cache_service.get_cache_stats()
+    
+    async def clear_price_cache(self, token_id: Optional[str] = None):
+        """Clear the 60-minute price cache"""
+        await self.price_cache_service.clear_cache(token_id)

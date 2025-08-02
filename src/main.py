@@ -40,7 +40,7 @@ async def lifespan(app: FastAPI):
         app.state.portfolio_data_handler = portfolio_data_handler
         
         # Initialize portfolio service with MongoDB
-        portfolio_service = PortfolioService(db, cache_ttl_seconds=300)  # 5 minute cache
+        portfolio_service = PortfolioService(db, cache_ttl_seconds=3600)  # 60 minute cache
         app.state.portfolio_service = portfolio_service
         logger.info("Portfolio service initialized on startup")
         
@@ -111,10 +111,6 @@ def verify_signature(message: str, signature: str, address: str) -> bool:
         return recovered_address.lower() == address.lower()
     except Exception:
         return False
-
-@app.get("/")
-async def read_root():
-    return {"Hello": "World"}
 
 @app.post("/chat/")
 async def chat_endpoint(request: ChatRequest):
@@ -191,30 +187,6 @@ async def list_strategies():
         strategies.append(strategy.to_dict())
     
     return {"strategies": strategies}
-
-@app.get("/cache/stats")
-async def get_cache_stats():
-    """Get cache statistics"""
-    portfolio_service = getattr(app.state, 'portfolio_service', None)
-    if portfolio_service is None:
-        raise HTTPException(status_code=500, detail="Portfolio service not initialized")
-    
-    stats = await portfolio_service.get_cache_stats()
-    return stats
-
-@app.post("/cache/warm/{vault_address}")
-async def warm_cache(vault_address: str):
-    """Warm cache for a specific vault address"""
-    portfolio_service = getattr(app.state, 'portfolio_service', None)
-    if portfolio_service is None:
-        raise HTTPException(status_code=500, detail="Portfolio service not initialized")
-    
-    try:
-        await portfolio_service.warm_cache_for_vault(vault_address)
-        return {"message": f"Cache warmed for vault {vault_address}"}
-    except Exception as e:
-        logger.error(f"Error warming cache for vault {vault_address}: {e}")
-        raise HTTPException(status_code=500, detail=f"Error warming cache: {str(e)}")
 
 @app.post("/strategies/tasks/create")
 async def create_strategy_task(request: CreateTaskRequest):
@@ -359,70 +331,6 @@ async def run_due_tasks(request: RunTasksRequest):
     except Exception as e:
         logger.error(f"Error running tasks: {e}")
         raise HTTPException(status_code=500, detail="Failed to run tasks")
-
-@app.get("/{chain_id}/swap")
-async def swap_endpoint(
-    chain_id: int,
-    src: str,
-    dst: str,
-    amount: str,
-    slippage: float = 1.0,
-    from_addr: str = None  # Using from_addr since 'from' is a Python keyword
-):
-    """
-    Get swap quote and transaction data for token swap via AKKA
-    
-    Args:
-        chain_id: Blockchain network ID
-        src: Source token address
-        dst: Destination token address  
-        amount: Amount to swap in smallest unit (wei)
-        slippage: Slippage tolerance as percentage (default 1.0)
-        from_addr: Address initiating the swap (optional)
-        
-    Returns:
-        Swap quote and transaction data
-    """
-    try:
-        # Import here to avoid circular imports
-        from tools.akka_tool import get_akka_quote
-        
-        # Convert slippage from percentage to decimal
-        slippage_decimal = slippage / 100.0
-        
-        # Convert amount to integer
-        try:
-            amount_int = int(amount)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid amount format")
-        
-        # Get quote from AKKA
-        quote_data = await get_akka_quote(
-            chain_id=chain_id,
-            src_token=src,
-            dst_token=dst,
-            amount=amount_int,
-            slippage=slippage_decimal
-        )
-        
-        if not quote_data:
-            raise HTTPException(status_code=500, detail="Failed to get swap quote from AKKA")
-        
-        return {
-            "success": True,
-            "quote": quote_data,
-            "chain_id": chain_id,
-            "src": src,
-            "dst": dst,
-            "amount": amount,
-            "slippage": slippage
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error in swap endpoint: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

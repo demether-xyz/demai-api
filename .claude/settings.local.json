@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:docs.akka.finance)",
+      "Bash(python test:*)",
+      "Bash(python3:*)",
+      "Bash(source:*)",
+      "Bash(poetry run python:*)",
+      "Bash(poetry:*)",
+      "Bash(python:*)",
+      "Bash(/usr/local/bin/poetry add:*)",
+      "Bash(/opt/homebrew/bin/poetry add httpx)",
+      "Bash(mv:*)",
+      "Bash(/usr/local/bin/poetry run python3:*)",
+      "Bash(/opt/homebrew/bin/poetry run python3 src/test/test_llm_aave_tool.py)",
+      "Bash(/opt/homebrew/bin/poetry shell)",
+      "Bash(ls:*)",
+      "Bash(.venv/bin/python3:*)",
+      "Bash(rm:*)",
+      "Bash(/opt/homebrew/bin/poetry run python3 src/test/test_akka.py)",
+      "Bash(/opt/homebrew/bin/poetry run python3 src/test/test_llm_akka_tool.py)",
+      "Bash(/opt/homebrew/bin/poetry run python3 src/test/test_portfolio.py)",
+      "Bash(/opt/homebrew/bin/poetry run python3 src/test/test_llm_portfolio_tool.py)",
+      "Bash(/opt/homebrew/bin/poetry run python3 src/test/test_simple_assistant.py)",
+      "Bash(grep:*)"
+    ],
+    "deny": []
+  }
+}
