@@ -2,8 +2,11 @@
 Simple chat assistant with portfolio viewing capabilities.
 """
 import asyncio
+import json
 import os
+from datetime import datetime
 from src.tools.portfolio_tool import create_portfolio_tool
+from src.tools.research_tool import create_research_tool
 from src.utils.ai_router_tools import create_tools_agent
 from langchain_core.tools import StructuredTool
 from langchain_core.messages import HumanMessage, AIMessage
@@ -11,6 +14,7 @@ from src.utils.json_parser import extract_json_content
 from src.config import logger
 from src.services.chat_session_handler import ChatSessionHandler
 from src.utils.mongo_connection import mongo_connection
+from src.utils.prompt_utils import get_prompt
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -24,6 +28,7 @@ class SimpleAssistant:
         self.vault_address = vault_address
         self.model = model
         self.portfolio_tool = self._create_portfolio_tool()
+        self.research_tool = self._create_research_tool()
         self.agent = None  # Will be created on first use
         self.session_handler = None  # Will be initialized when DB is available
         self.agent_id = "portfolio_assistant"  # Fixed agent ID for this assistant type
@@ -33,8 +38,16 @@ class SimpleAssistant:
         portfolio_config = create_portfolio_tool(vault_address=self.vault_address)
         return portfolio_config["tool"]
     
-    def _create_langchain_tool(self) -> StructuredTool:
-        """Create LangChain tool wrapper."""
+    def _create_research_tool(self):
+        """Create the research tool."""
+        research_config = create_research_tool()
+        return research_config["tool"]
+    
+    def _create_langchain_tools(self) -> list[StructuredTool]:
+        """Create LangChain tool wrappers."""
+        tools = []
+        
+        # Portfolio tool
         portfolio_func = self.portfolio_tool
         
         # Sync wrapper for the async portfolio tool
@@ -47,19 +60,51 @@ class SimpleAssistant:
             finally:
                 loop.close()
         
-        return StructuredTool(
+        tools.append(StructuredTool(
             name="view_portfolio",
             description="Get portfolio balances and holdings across all chains",
             func=sync_portfolio_tool,
             args_schema=None
-        )
+        ))
+        
+        # Research tool
+        research_func = self.research_tool
+        
+        # Sync wrapper for the async research tool
+        def sync_research_tool(*args, **kwargs) -> str:
+            """Perform research on a topic."""
+            # Extract query from kwargs or args
+            query = kwargs.get('query', args[0] if args else None)
+            if not query:
+                return json.dumps({"error": "Query parameter is required"})
+                
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(research_func(query))
+            finally:
+                loop.close()
+        
+        from pydantic import BaseModel, Field
+        
+        class ResearchInput(BaseModel):
+            query: str = Field(description="The research query or question to investigate")
+        
+        tools.append(StructuredTool(
+            name="research",
+            description="Perform web research and get real-time information on any topic",
+            func=sync_research_tool,
+            args_schema=ResearchInput
+        ))
+        
+        return tools
     
     async def _init_agent(self):
         """Initialize the agent if not already created."""
         if self.agent is None:
-            portfolio_tool = self._create_langchain_tool()
+            tools = self._create_langchain_tools()
             self.agent = await create_tools_agent(
-                tools=[portfolio_tool],
+                tools=tools,
                 model_id=self.model,
                 verbose=True
             )
@@ -71,6 +116,78 @@ class SimpleAssistant:
             self.session_handler = ChatSessionHandler(db)
             # Create indexes for better performance
             await self.session_handler.create_indexes()
+    
+    def _build_system_prompt(self) -> str:
+        """Build the base system prompt using prompt_utils."""
+        prompt_data = {
+            "identity": "You are demAI, an advanced AI-powered assistant designed to revolutionize decentralized finance (DeFi) by providing intelligent, personalized, and automated portfolio management.",
+            
+            "core_capabilities": {
+                "strategy_advisor": "Analyze portfolios, risk tolerance, and financial goals to recommend tailored DeFi strategies",
+                "portfolio_management": "Monitor positions and provide real-time insights on risk and opportunities", 
+                "educational_support": "Guide users through DeFi concepts with clear, accessible explanations",
+                "risk_analysis": "Provide comprehensive risk assessments and scenario simulations",
+                "cross_protocol": "Suggest strategies across multiple DeFi protocols and networks"
+            },
+            
+            "available_tools": [
+                {
+                    "name": "view_portfolio",
+                    "description": "Analyze the user's current DeFi positions, balances, and performance metrics across all supported chains"
+                },
+                {
+                    "name": "research", 
+                    "description": "Get real-time information about DeFi protocols, market conditions, yield opportunities, and educational content"
+                }
+            ],
+            
+            "key_principles": [
+                "Be proactive in identifying opportunities and risks",
+                "Provide actionable insights with clear risk/reward explanations",
+                "Use plain language to explain complex DeFi concepts",
+                "Personalize recommendations based on user's experience level and goals",
+                "Always consider gas costs and network efficiency in your suggestions"
+            ],
+            
+            "portfolio_analysis_guidelines": [
+                "Identify yield optimization opportunities",
+                "Assess liquidation risks and suggest protective measures",
+                "Compare current positions with market opportunities",
+                "Provide specific APY/risk metrics when relevant"
+            ],
+            
+            "response_format": {
+                "instructions": "IMPORTANT: Your responses must be in JSON format",
+                "example": {
+                    "reply": "your response to the user",
+                    "memory": {
+                        "key": "value to remember about this user/conversation"
+                    }
+                }
+            },
+            
+            "memory_guidelines": [
+                "Risk tolerance (conservative/moderate/aggressive)",
+                "Experience level with DeFi",
+                "Financial goals and time horizons",
+                "Preferred protocols or strategies",
+                "Past interactions and preferences"
+            ]
+        }
+        
+        return get_prompt(prompt_data, wrapper_tag="system_prompt")
+    
+    def _build_context_prompt(self, memory_data: dict = None) -> str:
+        """Build a context prompt with current date and memory to append before user message."""
+        context_data = {
+            "current_context": {
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC"),
+                "date": datetime.now().strftime("%A, %B %d, %Y"),
+                "user_memory": memory_data if memory_data else {"status": "No previous context stored"}
+            }
+        }
+        
+        return get_prompt(context_data, wrapper_tag="context_update")
     
     async def chat(self, message: str, user_id: str) -> str:
         """Process a chat message with session history and return response."""
@@ -102,35 +219,18 @@ class SimpleAssistant:
             # Get memory data from session
             memory_data = session_data.get("memory_data", {})
             
-            # Build enhanced system message with memory context
-            system_message = """You are a helpful DeFi portfolio assistant.
-
-When the user asks about balances, holdings, or their portfolio in any way, use the view_portfolio tool to get their complete portfolio data.
-
-Be proactive and helpful - provide the specific information they asked for along with relevant context from their portfolio.
-
-IMPORTANT: Your responses should be in JSON format:
-```json
-{
-  "reply": "your response to the user",
-  "memory": {
-    "key": "value to remember about this user/conversation"
-  }
-}
-```
-
-Only update memory when there's important information to remember about the user's preferences, goals, or context."""
+            # Build base system message
+            system_message = self._build_system_prompt()
             
-            # Add memory context if available
-            if memory_data:
-                memory_context = "\n\nRemembered information about this user:\n"
-                for key, value in memory_data.items():
-                    memory_context += f"- {key}: {value}\n"
-                system_message += memory_context
+            # Build context prompt with current date and memory
+            context_prompt = self._build_context_prompt(memory_data)
+            
+            # Combine context with user message for better memory retention
+            enhanced_message = f"{context_prompt}\n\nUser request: {message}"
             
             # Execute with agent and chat history
             result = await self.agent.execute(
-                user_instructions=message,
+                user_instructions=enhanced_message,
                 system_message=system_message,
                 chat_history=chat_history if chat_history else None
             )
