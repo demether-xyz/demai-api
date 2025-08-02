@@ -5,7 +5,7 @@ import asyncio
 import os
 import logging
 from strategies.strategies import StrategyExecutor
-from strategies.uniswap_strategy import execute_uniswap_swap
+from src.archive.uniswap_tool import execute_uniswap_swap
 from config import SUPPORTED_TOKENS, CHAIN_CONFIG
 
 # --- Test Configuration ---

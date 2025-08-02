@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 try:
     from web3 import Web3
-    from strategies.aave_strategy import (
+    from tools.aave_tool import (
         get_aave_current_yield,
         get_aave_yields_for_all_tokens,
         _ray_to_apy,

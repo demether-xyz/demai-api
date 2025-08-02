@@ -7,8 +7,8 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime, timedelta
 from web3 import Web3
 
-from .base_strategy import BaseStrategy, StrategyResult, RiskLevel
-from .aave_strategy import (
+from src.archive.base_strategy import BaseStrategy, StrategyResult, RiskLevel
+from tools.aave_tool import (
     get_aave_current_yield, 
     supply_to_aave,
     get_aave_strategy_balances,
@@ -93,7 +93,7 @@ class BTCCoreStrategy(BaseStrategy):
             
             # Import the strategy executor and supported tokens
             from config import SUPPORTED_TOKENS, RPC_ENDPOINTS
-            from strategies.strategies import StrategyExecutor
+            from tools.strategy_executor import StrategyExecutor
             import os
             
             # Get private key for execution
@@ -534,7 +534,7 @@ def supply_btc_to_colend(
             })
         
         from config import SUPPORTED_TOKENS, RPC_ENDPOINTS
-        from strategies.strategies import StrategyExecutor
+        from tools.strategy_executor import StrategyExecutor
         
         # Get private key
         private_key = os.getenv("PRIVATE_KEY")

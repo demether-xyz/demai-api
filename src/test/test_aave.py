@@ -1,15 +1,15 @@
 """
 Test file for strategy execution examples.
 
-This script demonstrates how to use the StrategyExecutor to interact with DeFi protocols.
+This script demonstrates how to use the ToolExecutor to interact with DeFi protocols.
 It can be configured to run on different chains by changing the `TEST_CHAIN_ID` and
 `TEST_VAULT_ADDRESS` constants.
 """
 import asyncio
 import os
 import logging
-from strategies.strategies import StrategyExecutor
-from strategies.aave_strategy import supply_to_aave, withdraw_from_aave
+from tools.tool_executor import ToolExecutor
+from tools.aave_tool import supply_to_aave, withdraw_from_aave
 from config import SUPPORTED_TOKENS, CHAIN_CONFIG
 
 # --- Test Configuration ---
@@ -23,17 +23,17 @@ TEST_CHAIN_ID = 1116  # Core
 TEST_VAULT_ADDRESS = "0x25bA533C8BD1a00b1FA4cD807054d03e168dff92"
 
 # Operations to perform
-ENABLE_SUPPLY = False
-ENABLE_WITHDRAW = True
+ENABLE_SUPPLY = True
+ENABLE_WITHDRAW = False
 
 # Asset and amount for the test
-TEST_TOKEN_SYMBOL = "SOLVBTC"
-TEST_AMOUNT_TO_INTERACT = 0.0000001
+TEST_TOKEN_SYMBOL = "USDC"
+TEST_AMOUNT_TO_INTERACT = 0.001
 
 # --- End Test Configuration ---
 
 
-def create_strategy_executor(chain_id: int) -> StrategyExecutor:
+def create_strategy_executor(chain_id: int) -> ToolExecutor:
     """
     Create a strategy executor for a given chain using settings from config.py.
     
@@ -41,7 +41,7 @@ def create_strategy_executor(chain_id: int) -> StrategyExecutor:
         chain_id: The chain ID to create the executor for.
         
     Returns:
-        An instance of StrategyExecutor.
+        An instance of ToolExecutor.
         
     Raises:
         ValueError: If the chain ID is not supported, RPC URL is missing, or
@@ -58,7 +58,7 @@ def create_strategy_executor(chain_id: int) -> StrategyExecutor:
     if not private_key:
         raise ValueError("PRIVATE_KEY environment variable not set. Please set it in your .env file or environment.")
     
-    return StrategyExecutor(rpc_url=rpc_url, private_key=private_key)
+    return ToolExecutor(rpc_url=rpc_url, private_key=private_key)
 
 
 async def example_usage():

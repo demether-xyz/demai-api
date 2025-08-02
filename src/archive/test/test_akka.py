@@ -9,7 +9,7 @@ import asyncio
 import os
 import logging
 from strategies.strategies import StrategyExecutor
-from strategies.akka_strategy import execute_akka_swap, get_akka_swap_estimate, approve_vault_token_for_akka
+from tools.akka_tool import execute_akka_swap, get_akka_swap_estimate, approve_vault_token_for_akka
 from config import SUPPORTED_TOKENS, CHAIN_CONFIG
 
 # --- Test Configuration ---

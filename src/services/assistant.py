@@ -10,7 +10,7 @@ from config import logger, SUPPORTED_TOKENS, CHAIN_CONFIG, RPC_ENDPOINTS, NATIVE
 from pancaik.core.config import get_config
 from pancaik.utils.ai_router import get_agent_completion, create_langchain_tool, get_completion
 
-from strategies.aave_strategy import supply_token_to_aave, withdraw_token_from_aave
+from tools.aave_tool import supply_token_to_aave, withdraw_token_from_aave
 import json
 from web3 import Web3
 

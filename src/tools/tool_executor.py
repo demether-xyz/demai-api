@@ -6,7 +6,7 @@ from web3.middleware import ExtraDataToPOAMiddleware
 from web3.providers.rpc import AsyncHTTPProvider
 from eth_account import Account
 from config import logger
-from strategies.strategy_config import STRATEGY_CONTRACTS, STRATEGY_FUNCTIONS
+from tools.strategy_config import STRATEGY_CONTRACTS, STRATEGY_FUNCTIONS
 
 
 # Contract ABIs - minimal required for strategy execution
@@ -27,10 +27,10 @@ VAULT_ABI = [
     }
 ]
 
-class StrategyExecutor:
+class ToolExecutor:
     def __init__(self, rpc_url: str, private_key: str):
         """
-        Initialize the strategy executor
+        Initialize the tool executor
         
         Args:
             rpc_url: RPC endpoint URL
@@ -41,7 +41,7 @@ class StrategyExecutor:
         
         self.account = Account.from_key(private_key)
         
-        logger.info(f"Initialized async strategy executor with account: {self.account.address}")
+        logger.info(f"Initialized async tool executor with account: {self.account.address}")
 
     async def execute_strategy(
         self,

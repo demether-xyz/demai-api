@@ -581,7 +581,7 @@ def _construct_aave_approvals(strategy_name: str, params: Dict[str, Any]) -> Lis
         return []
 
 async def supply_to_aave(
-    executor,  # StrategyExecutor instance
+    executor,  # ToolExecutor instance
     chain_id: int,
     vault_address: str,
     asset_address: str,
@@ -592,7 +592,7 @@ async def supply_to_aave(
     Supply tokens to Aave V3
     
     Args:
-        executor: StrategyExecutor instance
+        executor: ToolExecutor instance
         chain_id: The chain ID
         vault_address: Vault contract address
         asset_address: Token address to supply
@@ -627,7 +627,7 @@ async def supply_to_aave(
     )
 
 async def withdraw_from_aave(
-    executor,  # StrategyExecutor instance
+    executor,  # ToolExecutor instance
     chain_id: int,
     vault_address: str,
     asset_address: str,
@@ -638,7 +638,7 @@ async def withdraw_from_aave(
     Withdraw tokens from Aave V3
     
     Args:
-        executor: StrategyExecutor instance
+        executor: ToolExecutor instance
         chain_id: The chain ID
         vault_address: Vault contract address
         asset_address: Token address to withdraw
@@ -694,7 +694,7 @@ def supply_token_to_aave(
     try:
         # Import here to avoid circular imports
         from config import SUPPORTED_TOKENS, CHAIN_CONFIG, RPC_ENDPOINTS
-        from strategies.strategies import StrategyExecutor
+        from tools.tool_executor import ToolExecutor
         
         # Get private key from environment variable
         PRIVATE_KEY = os.getenv("PRIVATE_KEY")
@@ -728,7 +728,7 @@ def supply_token_to_aave(
         if not rpc_url:
             return json.dumps({"status": "error", "message": f"RPC URL not found for chain ID: {chain_id}"})
         
-        executor = StrategyExecutor(rpc_url, PRIVATE_KEY)
+        executor = ToolExecutor(rpc_url, PRIVATE_KEY)
 
         # Run the async supply_to_aave function synchronously
         loop = asyncio.new_event_loop()
@@ -776,7 +776,7 @@ def withdraw_token_from_aave(
     try:
         # Import here to avoid circular imports
         from config import SUPPORTED_TOKENS, CHAIN_CONFIG, RPC_ENDPOINTS
-        from strategies.strategies import StrategyExecutor
+        from tools.tool_executor import ToolExecutor
         
         # Get private key from environment variable
         PRIVATE_KEY = os.getenv("PRIVATE_KEY")
@@ -810,7 +810,7 @@ def withdraw_token_from_aave(
         if not rpc_url:
             return json.dumps({"status": "error", "message": f"RPC URL not found for chain ID: {chain_id}"})
         
-        executor = StrategyExecutor(rpc_url, PRIVATE_KEY)
+        executor = ToolExecutor(rpc_url, PRIVATE_KEY)
 
         # Run the async withdraw_from_aave function synchronously
         loop = asyncio.new_event_loop()

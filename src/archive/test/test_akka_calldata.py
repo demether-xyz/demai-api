@@ -7,7 +7,7 @@ using sample quote data.
 import json
 import logging
 from web3 import Web3
-from strategies.akka_strategy import _construct_akka_swap_calldata
+from tools.akka_tool import _construct_akka_swap_calldata
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

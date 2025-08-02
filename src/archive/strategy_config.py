@@ -1,8 +1,8 @@
 """
 Strategy configuration file containing contract addresses and function definitions
 """
-from .aave_strategy import AAVE_STRATEGY_CONTRACTS, AAVE_STRATEGY_FUNCTIONS, get_aave_strategy_balances
-from .btc_core_strategy import BTCCoreStrategy
+from tools.aave_tool import AAVE_STRATEGY_CONTRACTS, AAVE_STRATEGY_FUNCTIONS, get_aave_strategy_balances
+from src.archive.btc_core_strategy import BTCCoreStrategy
 
 # Create BTC Core strategy instance for balance checking
 _btc_core_strategy = BTCCoreStrategy()

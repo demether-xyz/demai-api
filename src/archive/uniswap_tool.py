@@ -152,7 +152,7 @@ def swap_tokens_on_uniswap(
     try:
         # Import here to avoid circular imports
         from config import SUPPORTED_TOKENS, RPC_ENDPOINTS
-        from strategies.strategies import StrategyExecutor
+        from tools.strategy_executor import StrategyExecutor
 
         # Get private key from environment variable
         PRIVATE_KEY = os.getenv("PRIVATE_KEY")

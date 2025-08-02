@@ -10,8 +10,8 @@ from services.portfolio_service import PortfolioService
 from setup import setup
 from contextlib import asynccontextmanager
 from pancaik.core.config import get_config
-from strategies.task_manager import TaskManager
-from strategies.strategy_registry import register_all_strategies
+from src.archive.task_manager import TaskManager
+from src.archive.strategy_registry import register_all_strategies
 
 # Global portfolio service instance
 portfolio_service = None
@@ -378,7 +378,7 @@ async def swap_endpoint(
     """
     try:
         # Import here to avoid circular imports
-        from strategies.akka_strategy import get_akka_quote
+        from tools.akka_tool import get_akka_quote
         
         # Convert slippage from percentage to decimal
         slippage_decimal = slippage / 100.0

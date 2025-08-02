@@ -4,7 +4,7 @@ Test script for reading Aave V3 yield rates
 import asyncio
 import logging
 from web3 import Web3
-from strategies.aave_strategy import (
+from tools.aave_tool import (
     get_aave_current_yield,
     get_aave_yields_for_all_tokens,
     get_aave_yield_for_token,

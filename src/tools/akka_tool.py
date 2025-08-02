@@ -50,7 +50,7 @@ AKKA_STRATEGY_FUNCTIONS = {
 }
 
 async def approve_vault_token_for_akka(
-    executor,  # StrategyExecutor instance
+    executor,  # ToolExecutor instance
     vault_address: str,
     token_address: str,
     amount: int,
@@ -60,7 +60,7 @@ async def approve_vault_token_for_akka(
     Approve token from vault to Akka router
     
     Args:
-        executor: StrategyExecutor instance
+        executor: ToolExecutor instance
         vault_address: Vault contract address
         token_address: Token to approve
         amount: Amount to approve in smallest unit
@@ -303,7 +303,7 @@ def _construct_akka_swap_calldata(
 
 
 async def execute_akka_swap(
-    executor,  # StrategyExecutor instance
+    executor,  # ToolExecutor instance
     chain_id: int,
     vault_address: str,
     src_token: str,
@@ -317,7 +317,7 @@ async def execute_akka_swap(
     Execute token swap via Akka
     
     Args:
-        executor: StrategyExecutor instance
+        executor: ToolExecutor instance
         chain_id: Chain ID
         vault_address: Vault contract address
         src_token: Source token address
@@ -460,7 +460,7 @@ def swap_tokens_via_akka(
     try:
         # Import here to avoid circular imports
         from config import SUPPORTED_TOKENS, CHAIN_CONFIG, RPC_ENDPOINTS
-        from strategies.strategies import StrategyExecutor
+        from tools.tool_executor import ToolExecutor
         
         # Get private key from environment variable
         PRIVATE_KEY = os.getenv("PRIVATE_KEY")
@@ -503,7 +503,7 @@ def swap_tokens_via_akka(
         if not rpc_url:
             return json.dumps({"status": "error", "message": f"RPC URL not found for chain ID: {chain_id}"})
         
-        executor = StrategyExecutor(rpc_url, PRIVATE_KEY)
+        executor = ToolExecutor(rpc_url, PRIVATE_KEY)
         
         # Run the async swap function synchronously
         loop = asyncio.new_event_loop()
@@ -654,7 +654,7 @@ def approve_vault_for_akka(
     try:
         # Import here to avoid circular imports
         from config import SUPPORTED_TOKENS, CHAIN_CONFIG, RPC_ENDPOINTS
-        from strategies.strategies import StrategyExecutor
+        from tools.tool_executor import ToolExecutor
         
         # Get private key from environment variable
         PRIVATE_KEY = os.getenv("PRIVATE_KEY")
@@ -689,7 +689,7 @@ def approve_vault_for_akka(
         if not rpc_url:
             return json.dumps({"status": "error", "message": f"RPC URL not found for chain ID: {chain_id}"})
         
-        executor = StrategyExecutor(rpc_url, PRIVATE_KEY)
+        executor = ToolExecutor(rpc_url, PRIVATE_KEY)
         
         # Run the async approve function synchronously
         loop = asyncio.new_event_loop()
