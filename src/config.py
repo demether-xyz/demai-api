@@ -22,7 +22,7 @@ load_dotenv()
 KEYCHAIN_SECRETS = [
     ("global", "OPENROUTER_API_KEY", None),
     ("demether", "PRIVATE_KEY", None),
-    ("ezenciel", "MONGO_CONNECTION", None),
+    ("pancake", "MONGO_CONNECTION", None),
 ]
 
 
