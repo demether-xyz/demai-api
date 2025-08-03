@@ -10,8 +10,6 @@ from services.portfolio_service import PortfolioService
 from contextlib import asynccontextmanager
 from src.utils.mongo_connection import mongo_connection
 from src.services.portfolio_data_handler import PortfolioDataHandler
-from src.archive.task_manager import TaskManager
-from src.archive.strategy_registry import register_all_strategies
 
 # Global instances
 portfolio_service = None
@@ -32,7 +30,7 @@ async def lifespan(app: FastAPI):
     try:
         db = await mongo_connection.connect()
         
-        global portfolio_service, task_manager, portfolio_data_handler
+        global portfolio_service, portfolio_data_handler
         
         # Initialize portfolio data handler
         portfolio_data_handler = PortfolioDataHandler(db)
@@ -43,15 +41,6 @@ async def lifespan(app: FastAPI):
         portfolio_service = PortfolioService(db, cache_ttl_seconds=3600)  # 60 minute cache
         app.state.portfolio_service = portfolio_service
         logger.info("Portfolio service initialized on startup")
-        
-        # Initialize task manager
-        task_manager = TaskManager(db)
-        app.state.task_manager = task_manager
-        
-        # Register all strategies
-        register_all_strategies(task_manager)
-        
-        logger.info("Task manager initialized on startup")
         
     except Exception as e:
         logger.error(f"Failed to initialize MongoDB connection: {e}")

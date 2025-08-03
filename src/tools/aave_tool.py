@@ -1,7 +1,7 @@
 """
 Aave V3 strategy implementation with contract definitions and helper functions
 """
-from typing import Optional, List, Dict, Any
+from typing import Optional, Dict, Any
 from web3 import Web3
 from eth_abi import encode
 import asyncio
@@ -25,14 +25,6 @@ AAVE_STRATEGY_CONTRACTS = {
     }
 }
 
-# Helper function to get aToken address from centralized config
-def get_atoken_address(token_symbol: str, chain_id: int) -> str:
-    """Get aToken address from SUPPORTED_TOKENS config"""
-    try:
-        from config import SUPPORTED_TOKENS
-        return SUPPORTED_TOKENS[token_symbol]["aave_atokens"][chain_id]
-    except KeyError:
-        return None
 
 # Aave V3 strategy function signatures
 AAVE_STRATEGY_FUNCTIONS = {
@@ -106,20 +98,6 @@ AAVE_V3_POOL_ABI = [
     }
 ]
 
-# ABI for Aave aToken
-AAVE_ATOKEN_ABI = [
-    {
-        "inputs": [
-            {"name": "account", "type": "address"}
-        ],
-        "name": "balanceOf",
-        "outputs": [
-            {"name": "", "type": "uint256"}
-        ],
-        "stateMutability": "view",
-        "type": "function"
-    }
-]
 
 # ABI for AaveProtocolDataProvider
 AAVE_DATA_PROVIDER_ABI = [
@@ -249,45 +227,7 @@ async def _get_aave_reserve_data(web3_instance, pool_address: str, asset_address
         logger.error(f"Error getting Aave reserve data: {e}")
         return {"error": str(e)}
 
-async def _get_atoken_balance_async(web3_instance, user_address: str, atoken_address: str, decimals: int) -> float:
-    """Get aToken balance for a user (async version)"""
-    try:
-        atoken_contract = web3_instance.eth.contract(
-            address=Web3.to_checksum_address(atoken_address),
-            abi=AAVE_ATOKEN_ABI
-        )
-        
-        # Check if async Web3
-        if hasattr(web3_instance.eth, 'call') and asyncio.iscoroutinefunction(web3_instance.eth.call):
-            balance_wei = await atoken_contract.functions.balanceOf(
-                Web3.to_checksum_address(user_address)
-            ).call()
-        else:
-            balance_wei = atoken_contract.functions.balanceOf(
-                Web3.to_checksum_address(user_address)
-            ).call()
-        
-        # Convert to human-readable format
-        return balance_wei / (10 ** decimals)
-        
-    except Exception as e:
-        logger.error(f"Error getting aToken balance: {e}")
-        return 0.0
 
-def _get_atoken_balance_sync(web3_instance, user_address: str, atoken_address: str, decimals: int) -> float:
-    """Get aToken balance for a user (sync version for compatibility)"""
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            return loop.run_until_complete(
-                _get_atoken_balance_async(web3_instance, user_address, atoken_address, decimals)
-            )
-        finally:
-            loop.close()
-    except Exception as e:
-        logger.error(f"Error in sync aToken balance wrapper: {e}")
-        return 0.0
 
 async def get_aave_current_yield(
     web3_instances: Dict,
@@ -362,75 +302,6 @@ async def get_aave_current_yield(
         logger.error(f"Error getting Aave yield for {token_symbol} on chain {chain_id}: {e}")
         return {"error": str(e)}
 
-async def get_aave_strategy_balances(
-    web3_instances: Dict,
-    vault_address: str,
-    supported_tokens: Dict
-) -> List[Dict[str, Any]]:
-    """
-    Get Aave V3 balances for all supported tokens across all chains
-    
-    Args:
-        web3_instances: Dictionary of Web3 instances by chain_id
-        vault_address: Vault address to check balances for
-        supported_tokens: Dictionary of supported tokens from config
-        
-    Returns:
-        List of balance dictionaries for each token/chain combination
-    """
-    balances = []
-    
-    for token_symbol, token_info in supported_tokens.items():
-        # Check if token has Aave aTokens configured
-        if "aave_atokens" not in token_info:
-            continue
-            
-        for chain_id, atoken_address in token_info["aave_atokens"].items():
-            # Skip if no Web3 instance for this chain
-            if chain_id not in web3_instances:
-                continue
-                
-            try:
-                # Get aToken balance
-                balance = await _get_atoken_balance_async(
-                    web3_instances[chain_id],
-                    vault_address,
-                    atoken_address,
-                    token_info["decimals"]
-                )
-                
-                # Skip if zero balance
-                if balance == 0:
-                    continue
-                
-                # Get current yield data
-                yield_data = await get_aave_current_yield(
-                    web3_instances,
-                    token_symbol,
-                    chain_id,
-                    supported_tokens
-                )
-                
-                balance_info = {
-                    "token_symbol": token_symbol,
-                    "chain_id": chain_id,
-                    "protocol": "Aave V3",
-                    "strategy": "aave_v3",
-                    "balance": balance,
-                    "decimals": token_info["decimals"],
-                    "atoken_address": atoken_address,
-                    "current_apy": yield_data.get("supply_apy", 0) if "error" not in yield_data else 0,
-                    "coingeckoId": token_info.get("coingeckoId"),  # Include underlying token's coingecko ID for pricing
-                    "type": "strategy"  # Mark as strategy holding
-                }
-                
-                balances.append(balance_info)
-                
-            except Exception as e:
-                logger.error(f"Error getting Aave balance for {token_symbol} on chain {chain_id}: {e}")
-                continue
-    
-    return balances
 
 async def supply_to_aave(
     executor,  # ToolExecutor instance

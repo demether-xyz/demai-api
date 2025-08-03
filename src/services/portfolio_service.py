@@ -6,7 +6,6 @@ import datetime
 from datetime import timezone
 from utils.coingecko_util import CoinGeckoUtil
 from config import SUPPORTED_TOKENS, RPC_ENDPOINTS, NATIVE_CURRENCIES, ERC20_ABI, CHAIN_CONFIG, VAULT_FACTORY_ADDRESS, VAULT_FACTORY_ABI, VAULT_ABI
-from services.asset_config import ASSET_BALANCE_CHECKERS
 
 if TYPE_CHECKING:
     from web3 import Web3
@@ -371,20 +370,22 @@ class PortfolioService:
         try:
             # Use optimized batch balance query - one call per chain
             logger.info(f"Using optimized batch balance queries for {target_address}")
-            all_balances_task = self._get_all_token_balances(target_address)
-            asset_balances_task = self._get_all_asset_balances(target_address)
+            all_balances = await self._get_all_token_balances(target_address)
             
-            all_balances, all_asset_balances = await asyncio.gather(
-                all_balances_task,
-                asset_balances_task
-            )
+            # Separate regular tokens from strategy tokens (aTokens)
+            regular_holdings = []
+            strategy_holdings = []
             
-            # Use all balances (includes both native and token balances)
-            all_holdings = all_balances
+            for holding in all_balances:
+                if holding.get("balance", 0) > 0:
+                    if holding.get("type") == "strategy":
+                        strategy_holdings.append(holding)
+                    else:
+                        regular_holdings.append(holding)
             
-            all_holdings = [h for h in all_holdings if h.get("balance") and h["balance"] > 0]
-            
-            asset_holdings = [h for h in all_asset_balances if h.get("balance") and h["balance"] > 0]
+            # Combine all holdings
+            all_holdings = regular_holdings
+            asset_holdings = strategy_holdings
 
             coingecko_ids = list(set(
                 [h["coingeckoId"] for h in all_holdings if "coingeckoId" in h] +
@@ -639,6 +640,17 @@ class PortfolioService:
                     "config": token_config,
                     "symbol": token_symbol
                 })
+                
+                # Also add aTokens if they exist for this token/chain combination
+                if "aave_atokens" in token_config and chain_id in token_config["aave_atokens"]:
+                    atoken_address = token_config["aave_atokens"][chain_id]
+                    tokens_by_chain[chain_id].append({
+                        "address": atoken_address,
+                        "config": token_config,
+                        "symbol": f"a{token_symbol}",  # Prefix with 'a' to indicate aToken
+                        "is_atoken": True,
+                        "underlying_symbol": token_symbol
+                    })
         
         # Log skipped chains only once (not per token)
         if skipped_chains:
@@ -698,16 +710,35 @@ class PortfolioService:
                     decimals = token_info["config"].get("decimals", 18)
                     balance = float(balance_wei) / (10 ** decimals)
                     
-                    balance_entry = {
-                        "symbol": token_info["symbol"],
-                        "name": token_info["config"]["name"],
-                        "chain_id": chain_id,
-                        "balance": balance,
-                        "coingeckoId": token_info["config"].get("coingeckoId")
-                    }
+                    # Skip zero balances for aTokens to reduce clutter
+                    if token_info.get("is_atoken") and balance == 0:
+                        continue
                     
-                    if token_info.get("is_native"):
-                        balance_entry["is_native"] = True
+                    if token_info.get("is_atoken"):
+                        # Handle aToken balance entry
+                        balance_entry = {
+                            "token_symbol": token_info["underlying_symbol"],  # Use underlying token symbol
+                            "chain_id": chain_id,
+                            "protocol": "Aave V3",
+                            "strategy": "aave_v3",
+                            "balance": balance,
+                            "decimals": decimals,
+                            "atoken_address": token_info["address"],
+                            "coingeckoId": token_info["config"].get("coingeckoId"),  # Use underlying token's coingecko ID
+                            "type": "strategy"  # Mark as strategy holding
+                        }
+                    else:
+                        # Regular token balance entry
+                        balance_entry = {
+                            "symbol": token_info["symbol"],
+                            "name": token_info["config"]["name"],
+                            "chain_id": chain_id,
+                            "balance": balance,
+                            "coingeckoId": token_info["config"].get("coingeckoId")
+                        }
+                        
+                        if token_info.get("is_native"):
+                            balance_entry["is_native"] = True
                     
                     all_balances.append(balance_entry)
                     logger.debug(f"{token_info['symbol']} on chain {chain_id}: {balance}")
@@ -753,6 +784,17 @@ class PortfolioService:
                             "config": token_config,
                             "symbol": token_symbol
                         })
+                        
+                        # Also add aTokens if they exist
+                        if "aave_atokens" in token_config and chain_id in token_config["aave_atokens"]:
+                            atoken_address = token_config["aave_atokens"][chain_id]
+                            chain_tokens.append({
+                                "address": atoken_address,
+                                "config": token_config,
+                                "symbol": f"a{token_symbol}",
+                                "is_atoken": True,
+                                "underlying_symbol": token_symbol
+                            })
                 
                 # Add native token
                 if chain_id in NATIVE_CURRENCIES:
@@ -773,16 +815,33 @@ class PortfolioService:
                                 decimals = token_info["config"].get("decimals", 18)
                                 balance = float(balance_wei) / (10 ** decimals)
                                 
-                                balance_entry = {
-                                    "symbol": token_info["symbol"],
-                                    "name": token_info["config"]["name"],
-                                    "chain_id": chain_id,
-                                    "balance": balance,
-                                    "coingeckoId": token_info["config"].get("coingeckoId")
-                                }
-                                
-                                if token_info.get("is_native"):
-                                    balance_entry["is_native"] = True
+                                # Skip zero balances for aTokens
+                                if token_info.get("is_atoken") and balance == 0:
+                                    continue
+                                    
+                                if token_info.get("is_atoken"):
+                                    balance_entry = {
+                                        "token_symbol": token_info["underlying_symbol"],
+                                        "chain_id": chain_id,
+                                        "protocol": "Aave V3",
+                                        "strategy": "aave_v3",
+                                        "balance": balance,
+                                        "decimals": decimals,
+                                        "atoken_address": token_info["address"],
+                                        "coingeckoId": token_info["config"].get("coingeckoId"),
+                                        "type": "strategy"
+                                    }
+                                else:
+                                    balance_entry = {
+                                        "symbol": token_info["symbol"],
+                                        "name": token_info["config"]["name"],
+                                        "chain_id": chain_id,
+                                        "balance": balance,
+                                        "coingeckoId": token_info["config"].get("coingeckoId")
+                                    }
+                                    
+                                    if token_info.get("is_native"):
+                                        balance_entry["is_native"] = True
                                 
                                 retry_balances.append(balance_entry)
                     except Exception as e:
@@ -845,16 +904,35 @@ class PortfolioService:
                     balance = float(balance_wei) / (10 ** decimals)
                 
                 if balance is not None:
-                    balance_entry = {
-                        "symbol": token_info["symbol"],
-                        "name": token_info["config"]["name"],
-                        "chain_id": chain_id,
-                        "balance": balance,
-                        "coingeckoId": token_info["config"].get("coingeckoId")
-                    }
-                    
-                    if token_info.get("is_native"):
-                        balance_entry["is_native"] = True
+                    # Skip zero balances for aTokens
+                    if token_info.get("is_atoken") and balance == 0:
+                        continue
+                        
+                    if token_info.get("is_atoken"):
+                        # Handle aToken balance entry
+                        balance_entry = {
+                            "token_symbol": token_info["underlying_symbol"],
+                            "chain_id": chain_id,
+                            "protocol": "Aave V3",
+                            "strategy": "aave_v3",
+                            "balance": balance,
+                            "decimals": token_info["config"]["decimals"],
+                            "atoken_address": token_info["address"],
+                            "coingeckoId": token_info["config"].get("coingeckoId"),
+                            "type": "strategy"
+                        }
+                    else:
+                        # Regular token balance entry
+                        balance_entry = {
+                            "symbol": token_info["symbol"],
+                            "name": token_info["config"]["name"],
+                            "chain_id": chain_id,
+                            "balance": balance,
+                            "coingeckoId": token_info["config"].get("coingeckoId")
+                        }
+                        
+                        if token_info.get("is_native"):
+                            balance_entry["is_native"] = True
                     
                     balances.append(balance_entry)
                     
@@ -862,43 +940,6 @@ class PortfolioService:
                 logger.error(f"Error in fallback balance query for {token_info['symbol']} on chain {chain_id}: {e}")
         
         return balances
-    
-    async def _get_all_asset_balances(self, vault_address: str) -> List[Dict[str, Any]]:
-        """Get balances for all protocol assets (like aTokens) concurrently"""
-        tasks = []
-        
-        # Create tasks for each asset balance checker
-        for asset_type, balance_checker in ASSET_BALANCE_CHECKERS.items():
-            if balance_checker is None:
-                logger.warning(f"Asset type {asset_type} has no balance checker configured, skipping")
-                continue
-                
-            try:
-                task = balance_checker(self.web3_instances, vault_address, SUPPORTED_TOKENS)
-                tasks.append(task) # Directly append the coroutine
-            except Exception as e:
-                logger.error(f"Error creating task for {asset_type} asset: {e}")
-                continue
-        
-        logger.info(f"Checking asset balances for {len(tasks)} asset types")
-        
-        # Execute all asset balance checks concurrently
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        all_asset_balances = []
-        for i, result in enumerate(results):
-            asset_type = list(ASSET_BALANCE_CHECKERS.keys())[i]
-            if isinstance(result, Exception):
-                logger.error(f"Error getting {asset_type} asset balances: {result}")
-                continue
-                
-            # Result should be a list of asset balance dictionaries
-            if isinstance(result, list):
-                all_asset_balances.extend(result)
-                logger.info(f"Found {len(result)} asset balances from {asset_type}")
-        
-        logger.info(f"Retrieved total of {len(all_asset_balances)} asset balances")
-        return all_asset_balances
     
 
     async def get_portfolio_for_llm(self, vault_address: Optional[str] = None, wallet_address: Optional[str] = None, refresh: bool = False) -> Dict[str, Any]:
