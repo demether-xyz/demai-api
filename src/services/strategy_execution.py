@@ -84,7 +84,8 @@ class StrategyExecutor:
                 "Use yield data from context for optimization decisions",
                 "Calculate exact amounts for percentage-based requests",
                 "Chain multiple operations together as needed",
-                "Complete the entire task without asking for clarification"
+                "Complete the entire task without asking for clarification",
+                "Create a brief, user-friendly memo summarizing key actions and amounts for SMS notification"
             ],
             
             "response_format": {
@@ -95,6 +96,7 @@ class StrategyExecutor:
                     "actions_taken": ["List of actions performed"],
                     "transactions": ["List of transaction hashes with chain info"],
                     "result": "Summary of what was accomplished",
+                    "memo": "Brief SMS-friendly summary (max 160 chars) of key action taken and outcome. Example: 'Swapped 500 USDT to USDC and deposited at 5.2% APY on Core chain'",
                     "error": "Error message if failed (optional)"
                 }
             }

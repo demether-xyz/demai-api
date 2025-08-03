@@ -13,6 +13,7 @@ from src.services.portfolio_data_handler import PortfolioDataHandler
 from src.services.task_manager import TaskManager
 from src.services.strategies import get_all_strategies
 from src.utils.aave_yields_utils import get_simplified_aave_yields
+from src.services.task_executor import TaskExecutor
 
 # Global instances
 portfolio_service = None
@@ -342,6 +343,21 @@ async def delete_strategy_subscription(request: DeleteStrategyRequest):
         raise HTTPException(status_code=404, detail="Strategy subscription not found or unauthorized")
     
     return {"success": True}
+
+@app.get("/tasks")
+async def execute_next_task():
+    """Get and execute the next due task.
+    
+    This endpoint can be called by anyone (e.g., a cron job) to execute due tasks.
+    It picks the oldest task that is due and runs it.
+    """
+    task_manager = getattr(app.state, 'task_manager', None)
+    if task_manager is None:
+        raise HTTPException(status_code=500, detail="Task manager not initialized")
+    
+    # Use task executor
+    task_executor = TaskExecutor(task_manager)
+    return await task_executor.execute_next_task()
 
 if __name__ == "__main__":
     import uvicorn

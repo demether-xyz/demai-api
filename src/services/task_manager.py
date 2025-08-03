@@ -2,7 +2,7 @@
 Task manager for handling user strategy subscriptions.
 """
 from typing import Dict, Any, List, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from bson import ObjectId
 import logging
@@ -23,11 +23,34 @@ class TaskManager:
         self.db = db
         self.tasks_collection = db.strategy_tasks
         
+    def calculate_next_run_time(self, frequency: str, last_executed: Optional[datetime] = None) -> datetime:
+        """Calculate the next run time based on frequency.
+        
+        Args:
+            frequency: Task frequency ('daily', 'hourly', etc.)
+            last_executed: Last execution time (use current time if None)
+            
+        Returns:
+            Next scheduled run time
+        """
+        base_time = last_executed or datetime.now(timezone.utc)
+        
+        frequency_map = {
+            "daily": timedelta(days=1),
+            "hourly": timedelta(hours=1),
+            "weekly": timedelta(weeks=1),
+            "monthly": timedelta(days=30),  # Approximate
+        }
+        
+        delta = frequency_map.get(frequency.lower(), timedelta(days=1))
+        return base_time + delta
+        
     async def create_indexes(self):
         """Create necessary database indexes."""
         await self.tasks_collection.create_index("user_address")
         await self.tasks_collection.create_index([("user_address", 1), ("strategy_id", 1)])
         await self.tasks_collection.create_index("status")
+        await self.tasks_collection.create_index("next_run_time")
         
     async def create_task(
         self,
@@ -88,6 +111,7 @@ class TaskManager:
             raise ValueError(f"Total percentage for {chain} chain would exceed 100% (current: {total_percentage}%, adding: {percentage}%)")
             
         # Create task document
+        current_time = datetime.now(timezone.utc)
         task = {
             "user_address": user_address.lower(),
             "vault_address": vault_address.lower(),
@@ -95,10 +119,13 @@ class TaskManager:
             "chain": chain.lower(),
             "percentage": percentage,
             "enabled": enabled,
-            "created_at": datetime.now(timezone.utc),
-            "updated_at": datetime.now(timezone.utc),
+            "created_at": current_time,
+            "updated_at": current_time,
             "last_executed": None,
-            "execution_count": 0
+            "next_run_time": self.calculate_next_run_time(strategy["frequency"]),
+            "execution_count": 0,
+            "last_execution_memo": None,
+            "last_execution_status": None
         }
         
         # Insert into database
@@ -230,21 +257,70 @@ class TaskManager:
                 
         return tasks
         
-    async def mark_task_executed(self, task_id: str) -> bool:
-        """Mark a task as executed.
+    async def get_next_due_task(self) -> Optional[Dict[str, Any]]:
+        """Get the next task that is due for execution.
+        
+        Returns:
+            The next due task, or None if no tasks are due
+        """
+        current_time = datetime.now(timezone.utc)
+        
+        # Find enabled tasks that are due (next_run_time <= current_time)
+        task = await self.tasks_collection.find_one(
+            {
+                "enabled": True,
+                "next_run_time": {"$lte": current_time}
+            },
+            sort=[("next_run_time", 1)]  # Get the oldest due task
+        )
+        
+        if task:
+            task["_id"] = str(task["_id"])
+            try:
+                strategy = get_strategy(task["strategy_id"])
+                task["strategy"] = strategy
+            except ValueError:
+                task["strategy"] = None
+                
+        return task
+    
+    async def mark_task_executed(self, task_id: str, execution_memo: Optional[str] = None, execution_status: str = "success") -> bool:
+        """Mark a task as executed and update next run time.
         
         Args:
             task_id: Task ID
+            execution_memo: Brief summary of execution results (for SMS notifications)
+            execution_status: Status of execution ("success" or "failed")
             
         Returns:
             True if updated successfully
         """
+        # Get the task to retrieve strategy frequency
+        task = await self.tasks_collection.find_one({"_id": ObjectId(task_id)})
+        if not task:
+            return False
+            
+        strategy = get_strategy(task["strategy_id"])
+        current_time = datetime.now(timezone.utc)
+        next_run_time = self.calculate_next_run_time(strategy["frequency"], current_time)
+        
+        # Build update document
+        update_doc = {
+            "$set": {
+                "last_executed": current_time,
+                "next_run_time": next_run_time,
+                "last_execution_status": execution_status
+            },
+            "$inc": {"execution_count": 1}
+        }
+        
+        # Add memo if provided
+        if execution_memo:
+            update_doc["$set"]["last_execution_memo"] = execution_memo[:160]  # Ensure SMS-friendly length
+        
         result = await self.tasks_collection.update_one(
             {"_id": ObjectId(task_id)},
-            {
-                "$set": {"last_executed": datetime.now(timezone.utc)},
-                "$inc": {"execution_count": 1}
-            }
+            update_doc
         )
         
         return result.modified_count > 0
