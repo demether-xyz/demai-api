@@ -32,10 +32,18 @@ class TaskExecutor:
                 logger.info(f"No Telegram binding found for {user_address}")
                 return
             
+            # Get strategy name
+            from src.services.strategies import get_strategy
+            try:
+                strategy = get_strategy(strategy_id)
+                strategy_name = strategy.get("name", strategy_id)
+            except:
+                strategy_name = strategy_id
+            
             # Prepare the notification message
             status_emoji = "✅" if status == "success" else "❌"
             message = f"{status_emoji} **Strategy Execution {status.capitalize()}**\n\n"
-            message += f"**Strategy:** {strategy_id}\n"
+            message += f"**Strategy:** {strategy_name}\n"
             message += f"**Status:** {status}\n"
             message += f"**Details:** {memo}\n"
             
