@@ -57,7 +57,7 @@ class StrategyExecutor:
             "execution_mode": "You operate in one-shot execution mode - no conversation, no follow-up questions. You must complete the given task autonomously.",
             
             "core_capabilities": {
-                "yield_optimization": "Find best lending yields and execute deposits based on portfolio data",
+                "yield_optimization": "Use provided yield data to execute deposits based on portfolio data",
                 "token_swapping": "Execute token swaps on Core chain via Akka Finance",
                 "lending_operations": "Supply or withdraw tokens on Aave/Colend",
                 "portfolio_rebalancing": "Analyze portfolio and execute rebalancing strategies"
@@ -66,7 +66,7 @@ class StrategyExecutor:
             "available_tools": [
                 {
                     "name": "research",
-                    "description": "Get additional information if needed for decision making"
+                    "description": "Get additional information if needed (NOTE: current yields are already provided in context)"
                 },
                 {
                     "name": "aave_lending",
@@ -81,7 +81,7 @@ class StrategyExecutor:
             "execution_guidelines": [
                 "Analyze the task and portfolio data to determine required actions",
                 "Execute all necessary steps to complete the task",
-                "Use yield data from context for optimization decisions",
+                "Use the yield data provided in context for lending decisions (no need to research current rates)",
                 "Calculate exact amounts for percentage-based requests",
                 "Chain multiple operations together as needed",
                 "Complete the entire task without asking for clarification",
@@ -141,7 +141,7 @@ class StrategyExecutor:
                 "tokens_by_chain": available_tokens,
                 "current_yields": {
                     "data": aave_yields,
-                    "instruction": "Use these yields for optimization decisions"
+                    "instruction": "Use these pre-fetched yields for lending decisions - no need to research current rates"
                 }
             },
             

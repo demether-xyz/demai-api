@@ -23,17 +23,22 @@ class TaskManager:
         self.db = db
         self.tasks_collection = db.strategy_tasks
         
-    def calculate_next_run_time(self, frequency: str, last_executed: Optional[datetime] = None) -> datetime:
+    def calculate_next_run_time(self, frequency: str, last_executed: Optional[datetime] = None, is_first_run: bool = False) -> datetime:
         """Calculate the next run time based on frequency.
         
         Args:
             frequency: Task frequency ('daily', 'hourly', etc.)
             last_executed: Last execution time (use current time if None)
+            is_first_run: If True, schedule in 5 minutes for new tasks
             
         Returns:
             Next scheduled run time
         """
         base_time = last_executed or datetime.now(timezone.utc)
+        
+        # For newly created tasks, schedule in 5 minutes
+        if is_first_run:
+            return base_time + timedelta(minutes=5)
         
         frequency_map = {
             "daily": timedelta(days=1),
@@ -122,7 +127,7 @@ class TaskManager:
             "created_at": current_time,
             "updated_at": current_time,
             "last_executed": None,
-            "next_run_time": self.calculate_next_run_time(strategy["frequency"]),
+            "next_run_time": self.calculate_next_run_time(strategy["frequency"], is_first_run=True),
             "execution_count": 0,
             "last_execution_memo": None,
             "last_execution_status": None
