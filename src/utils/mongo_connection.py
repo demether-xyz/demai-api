@@ -21,7 +21,7 @@ class MongoConnection:
         if self._db is not None:
             return self._db
             
-        connection_string = f"{os.getenv("MONGO_CONNECTION")}/demai"
+        connection_string = f"{os.getenv('MONGO_CONNECTION')}/demai"
         if not connection_string:
             raise ValueError("MONGO_CONNECTION environment variable not set")
         
