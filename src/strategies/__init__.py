@@ -1,3 +1,0 @@
-"""
-Strategies package initialization
-""" 
