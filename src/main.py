@@ -15,12 +15,14 @@ from src.services.strategies import get_all_strategies
 from src.utils.aave_yields_utils import get_simplified_aave_yields
 from src.services.task_executor import TaskExecutor
 from src.utils.telegram_helper import TelegramHelper
+from src.models.telegram_binding import TelegramBinding
 
 # Global instances
 portfolio_service = None
 task_manager = None
 portfolio_data_handler = None
 telegram_helper = None
+telegram_binding = None
 
 # Auth message that must match frontend DEMAI_AUTH_MESSAGE
 DEMAI_AUTH_MESSAGE = """Welcome to demAI!
@@ -55,11 +57,17 @@ async def lifespan(app: FastAPI):
         logger.info("Task manager initialized on startup")
         
         # Initialize Telegram helper if token is available
-        global telegram_helper
+        global telegram_helper, telegram_binding
         if TELEGRAM_BOT_TOKEN:
             telegram_helper = TelegramHelper(TELEGRAM_BOT_TOKEN)
             app.state.telegram_helper = telegram_helper
             logger.info("Telegram helper initialized on startup")
+            
+            # Initialize Telegram binding model
+            telegram_binding = TelegramBinding(db)
+            await telegram_binding.create_indexes()
+            app.state.telegram_binding = telegram_binding
+            logger.info("Telegram binding model initialized on startup")
         else:
             logger.warning("TELEGRAM_BOT_TOKEN not found in environment variables")
         
@@ -405,6 +413,8 @@ async def execute_next_task():
 async def telegram_webhook(request: Dict[str, Any]):
     """Handle incoming Telegram webhook updates"""
     telegram_helper = getattr(app.state, 'telegram_helper', None)
+    telegram_binding_model = getattr(app.state, 'telegram_binding', None)
+    
     if telegram_helper is None:
         raise HTTPException(status_code=500, detail="Telegram bot not initialized")
     
@@ -416,16 +426,82 @@ async def telegram_webhook(request: Dict[str, Any]):
             chat_id = processed_data["chat_id"]
             user_message = processed_data["content"]
             
-            # Hardcoded test values for now
-            test_wallet = "0x55b3d73e525227A7F0b25e28e17c1E94006A25dd"
-            test_vault = "0x25bA533C8BD1a00b1FA4cD807054d03e168dff92"
+            # Check if this is a raw signature (starts with 0x and is ~132 characters)
+            if user_message.startswith("0x") and len(user_message) >= 130 and len(user_message) <= 140:
+                # This looks like a signature, prompt user to use the verify command
+                await telegram_helper.send_message(
+                    chat_id,
+                    "It looks like you're trying to verify your wallet. Please use the following format:\n\n"
+                    "/verify <wallet_address> <vault_address> <signature>\n\n"
+                    "Example:\n/verify 0x1234... 0x5678... " + user_message[:20] + "..."
+                )
+                return {"ok": True}
             
+            # Check if this is a verification command
+            if user_message.startswith("/verify "):
+                # Parse verification command: /verify <wallet_address> <vault_address> <signature>
+                parts = user_message.split()
+                if len(parts) != 4:
+                    await telegram_helper.send_message(
+                        chat_id, 
+                        "Please use format: /verify <wallet_address> <vault_address> <signature>"
+                    )
+                    return {"ok": True}
+                
+                _, wallet_address, vault_address, signature = parts
+                
+                # Construct the expected message that includes vault address
+                expected_message = f"Bind wallet {wallet_address} with vault {vault_address} to Telegram"
+                
+                # Verify the signature
+                is_valid = verify_signature(
+                    message=expected_message,
+                    signature=signature,
+                    address=wallet_address
+                )
+                
+                if is_valid:
+                    # Store the binding
+                    await telegram_binding_model.create_or_update_binding(
+                        chat_id=str(chat_id),
+                        wallet_address=wallet_address,
+                        vault_address=vault_address,
+                        verification_signature=signature
+                    )
+                    
+                    await telegram_helper.send_message(
+                        chat_id,
+                        f"✅ Successfully verified!\n\n"
+                        f"Wallet: {wallet_address[:6]}...{wallet_address[-4:]}\n"
+                        f"Vault: {vault_address[:6]}...{vault_address[-4:]}\n\n"
+                        f"You can now use the DemAI assistant directly in Telegram!"
+                    )
+                else:
+                    await telegram_helper.send_message(
+                        chat_id,
+                        "❌ Invalid signature. Please make sure you're signing with the correct wallet."
+                    )
+                
+                return {"ok": True}
+            
+            # Check if user has existing binding
+            binding = await telegram_binding_model.get_binding(str(chat_id))
+            
+            if not binding:
+                # No binding found, prompt user to verify
+                await telegram_helper.send_message(
+                    chat_id,
+                    "To start your verification process, please visit https://demether.ai/"
+                )
+                return {"ok": True}
+            
+            # Use the bound wallet and vault addresses
             try:
                 # Use the shared chat processing logic
                 response = await _process_chat_message(
                     message=user_message,
-                    chat_id=test_wallet,  # Use test wallet as chat ID for internal system
-                    vault_address=test_vault,
+                    chat_id=binding["wallet_address"],  # Use wallet address as chat ID for consistency
+                    vault_address=binding["vault_address"],
                     return_intermediate_steps=False  # Simple response for telegram
                 )
                 
