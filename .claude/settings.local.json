@@ -33,7 +33,8 @@
       "Bash(export:*)",
       "Bash(/opt/homebrew/bin/python3 -m poetry install:*)",
       "Bash(/opt/homebrew/bin/python3 -m pytest src/test/test_llm_portfolio_tool.py -v)",
-      "Bash(/opt/homebrew/bin/python3:*)"
+      "Bash(/opt/homebrew/bin/python3:*)",
+      "Bash(find:*)"
     ],
     "deny": []
   }

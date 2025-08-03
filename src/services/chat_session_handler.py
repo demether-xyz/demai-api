@@ -4,7 +4,7 @@ MongoDB handler for chat sessions with message history and memory management.
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any
 import motor.motor_asyncio
-from src.config import logger
+from config import logger
 
 # Configuration constants
 SESSION_TTL_HOURS = 24  # Sessions expire after 24 hours of inactivity

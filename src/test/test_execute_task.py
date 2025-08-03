@@ -8,9 +8,9 @@ import sys
 # Add parent directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-from src.services.task_manager import TaskManager
-from src.services.task_executor import TaskExecutor
-from src.utils.mongo_connection import mongo_connection
+from services.task_manager import TaskManager
+from services.task_executor import TaskExecutor
+from utils.mongo_connection import mongo_connection
 
 
 async def main():

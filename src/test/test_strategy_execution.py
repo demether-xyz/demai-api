@@ -8,7 +8,7 @@ import sys
 # Add parent directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-from src.services.strategy_execution import execute_defi_strategy
+from services.strategy_execution import execute_defi_strategy
 
 
 async def main():

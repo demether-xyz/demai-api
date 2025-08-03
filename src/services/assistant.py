@@ -5,15 +5,15 @@ import asyncio
 import json
 from datetime import datetime
 from typing import List, Dict, Any, Union
-from src.utils.defi_tools import create_defi_langchain_tools
-from src.utils.aave_yields_utils import get_simplified_aave_yields, get_available_tokens_and_chains
-from src.utils.ai_router_tools import create_tools_agent
+from utils.defi_tools import create_defi_langchain_tools
+from utils.aave_yields_utils import get_simplified_aave_yields, get_available_tokens_and_chains
+from utils.ai_router_tools import create_tools_agent
 from langchain_core.messages import HumanMessage, AIMessage
-from src.utils.json_parser import extract_json_content
-from src.config import logger
-from src.services.chat_session_handler import ChatSessionHandler
-from src.utils.mongo_connection import mongo_connection
-from src.utils.prompt_utils import get_prompt
+from utils.json_parser import extract_json_content
+from config import logger
+from services.chat_session_handler import ChatSessionHandler
+from utils.mongo_connection import mongo_connection
+from utils.prompt_utils import get_prompt
 from dotenv import load_dotenv
 
 load_dotenv()

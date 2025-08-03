@@ -14,7 +14,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import StructuredTool
 from langchain_openai import ChatOpenAI
 
-from src.config import logger
+from config import logger
 
 
 class LangChainToolsAgent:

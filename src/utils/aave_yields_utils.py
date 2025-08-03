@@ -2,9 +2,9 @@
 Shared utilities for fetching and formatting AAVE yields data.
 """
 from typing import List, Dict, Any
-from src.tools.aave_tool import get_all_aave_yields
-from src.utils.mongo_connection import mongo_connection
-from src.config import logger, CHAIN_CONFIG
+from tools.aave_tool import get_all_aave_yields
+from utils.mongo_connection import mongo_connection
+from config import logger, CHAIN_CONFIG
 
 
 async def get_simplified_aave_yields() -> List[Dict[str, Any]]:
@@ -45,7 +45,7 @@ def get_available_tokens_and_chains() -> Dict[str, Any]:
     Returns:
         Dict with available_tokens and available_chains
     """
-    from src.config import SUPPORTED_TOKENS, CHAIN_CONFIG
+    from config import SUPPORTED_TOKENS, CHAIN_CONFIG
     
     # Extract available tokens and their chains
     available_tokens = {}

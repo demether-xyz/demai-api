@@ -2,12 +2,12 @@
 Task executor service for running scheduled strategy tasks.
 """
 from typing import Dict, Any, Optional
-from src.services.task_manager import TaskManager
-from src.services.strategies import format_strategy_task
-from src.services.strategy_execution import execute_defi_strategy
-from src.config import logger
-from src.utils.telegram_helper import TelegramHelper
-from src.models.telegram_binding import TelegramBinding
+from services.task_manager import TaskManager
+from services.strategies import format_strategy_task
+from services.strategy_execution import execute_defi_strategy
+from config import logger
+from utils.telegram_helper import TelegramHelper
+from models.telegram_binding import TelegramBinding
 
 
 class TaskExecutor:
@@ -33,7 +33,7 @@ class TaskExecutor:
                 return
             
             # Get strategy name
-            from src.services.strategies import get_strategy
+            from services.strategies import get_strategy
             try:
                 strategy = get_strategy(strategy_id)
                 strategy_name = strategy.get("name", strategy_id)
@@ -164,7 +164,7 @@ class TaskExecutor:
         task["_id"] = str(task["_id"])
         
         # Get strategy details
-        from src.services.strategies import get_strategy
+        from services.strategies import get_strategy
         try:
             strategy = get_strategy(task["strategy_id"])
             task["strategy"] = strategy

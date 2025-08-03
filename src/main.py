@@ -1,21 +1,21 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from src.services.assistant import run_chatbot
+from services.assistant import run_chatbot
 from eth_account.messages import encode_defunct
 from web3 import Web3
 from typing import Optional, List, Dict, Any, Union
 from config import logger, TELEGRAM_BOT_TOKEN
 from services.portfolio_service import PortfolioService
 from contextlib import asynccontextmanager
-from src.utils.mongo_connection import mongo_connection
-from src.services.portfolio_data_handler import PortfolioDataHandler
-from src.services.task_manager import TaskManager
-from src.services.strategies import get_all_strategies
-from src.utils.aave_yields_utils import get_simplified_aave_yields
-from src.services.task_executor import TaskExecutor
-from src.utils.telegram_helper import TelegramHelper
-from src.models.telegram_binding import TelegramBinding
+from utils.mongo_connection import mongo_connection
+from services.portfolio_data_handler import PortfolioDataHandler
+from services.task_manager import TaskManager
+from services.strategies import get_all_strategies
+from utils.aave_yields_utils import get_simplified_aave_yields
+from services.task_executor import TaskExecutor
+from utils.telegram_helper import TelegramHelper
+from models.telegram_binding import TelegramBinding
 
 # Global instances
 portfolio_service = None

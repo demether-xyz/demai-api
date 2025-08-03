@@ -13,9 +13,9 @@ import logging
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 # Import config first to load environment variables
-from src.config import CHAIN_CONFIG, SUPPORTED_TOKENS
-from src.tools.akka_tool import create_swap_tool
-from src.utils.ai_router_tools import create_tools_agent
+from config import CHAIN_CONFIG, SUPPORTED_TOKENS
+from tools.akka_tool import create_swap_tool
+from utils.ai_router_tools import create_tools_agent
 from langchain_core.tools import StructuredTool
 
 # Configure logging with simplified format
