@@ -5,14 +5,10 @@ import asyncio
 import json
 from datetime import datetime
 from typing import List, Dict, Any, Union
-from pydantic import BaseModel, Field
-from src.tools.portfolio_tool import create_portfolio_tool
-from src.tools.research_tool import create_research_tool
-from src.tools.aave_tool import create_aave_tool, get_all_aave_yields
-from src.tools.akka_tool import create_swap_tool
-from src.utils.ai_router_tools import create_tools_agent, create_langchain_tool
+from src.utils.defi_tools import create_defi_langchain_tools
+from src.utils.aave_yields_utils import get_simplified_aave_yields, get_available_tokens_and_chains
+from src.utils.ai_router_tools import create_tools_agent
 from langchain_core.messages import HumanMessage, AIMessage
-from langchain_core.tools import StructuredTool
 from src.utils.json_parser import extract_json_content
 from src.config import logger
 from src.services.chat_session_handler import ChatSessionHandler
@@ -30,105 +26,19 @@ class SimpleAssistant:
         """Initialize the assistant with a vault address."""
         self.vault_address = vault_address
         self.model = model
-        self.portfolio_tool = self._create_portfolio_tool()
-        self.research_tool = self._create_research_tool()
-        self.aave_tool = self._create_aave_tool()
-        self.akka_tool = self._create_akka_tool()
+        self.tools = None  # Will be created on first use
         self.agent = None  # Will be created on first use
         self.session_handler = None  # Will be initialized when DB is available
         self.agent_id = "portfolio_assistant"  # Fixed agent ID for this assistant type
     
-    def _create_portfolio_tool(self):
-        """Create the portfolio tool."""
-        portfolio_config = create_portfolio_tool(vault_address=self.vault_address)
-        return portfolio_config["tool"]
-    
-    def _create_research_tool(self):
-        """Create the research tool."""
-        research_config = create_research_tool()
-        return research_config["tool"]
-    
-    def _create_aave_tool(self):
-        """Create the Aave tool."""
-        aave_config = create_aave_tool(vault_address=self.vault_address)
-        return aave_config["tool"]
-    
-    def _create_akka_tool(self):
-        """Create the Akka swap tool."""
-        akka_config = create_swap_tool(vault_address=self.vault_address)
-        return akka_config["tool"]
-    
-    def _create_langchain_tools(self) -> list[StructuredTool]:
-        """Create LangChain tool wrappers."""
-        tools = []
-        
-        # Portfolio tool
-        portfolio_func = self.portfolio_tool
-        
-        # Define input schema for portfolio tool
-        class PortfolioInput(BaseModel):
-            force_long_refresh: bool = Field(default=False, description="Force a complete refresh of portfolio data. This is a slow operation - only use after major transactions or when explicitly requested. Normally, cached data is sufficient.")
-        
-        # Create portfolio tool using helper function
-        tools.append(create_langchain_tool(
-            func=portfolio_func,
-            name="view_portfolio",
-            description="Get portfolio balances and holdings across all chains",
-            args_schema=PortfolioInput
-        ))
-        
-        # Research tool
-        research_func = self.research_tool
-        
-        # Define input schema for research tool
-        
-        class ResearchInput(BaseModel):
-            query: str = Field(description="The research query or question to investigate")
-        
-        class AaveLendingInput(BaseModel):
-            chain_name: str = Field(description="The blockchain network - 'Core' or 'Arbitrum'")
-            token_symbol: str = Field(description="The token symbol (e.g., 'USDC', 'USDT')")
-            amount: float = Field(description="The amount to supply or withdraw")
-            action: str = Field(description="The operation - 'supply' or 'withdraw'")
-        
-        class AkkaSwapInput(BaseModel):
-            chain_name: str = Field(description="The blockchain network - currently only 'Core' is supported")
-            src_token: str = Field(description="The source token symbol to swap from (e.g., 'USDC', 'USDT')")
-            dst_token: str = Field(description="The destination token symbol to swap to")
-            amount: float = Field(description="The amount of source token to swap")
-        
-        tools.append(create_langchain_tool(
-            func=research_func,
-            name="research",
-            description="Perform web research and get real-time information on any topic",
-            args_schema=ResearchInput
-        ))
-        
-        # Aave tool
-        aave_func = self.aave_tool
-        
-        # Create Aave tool with async support
-        
-        tools.append(create_langchain_tool(
-            func=aave_func,
-            name="aave_lending",
-            description="Supply or withdraw tokens on Aave V3 (Arbitrum) or Colend (Core chain). Use this tool when the user wants to lend tokens to Aave/Colend or withdraw tokens from Aave/Colend.",
-            args_schema=AaveLendingInput
-        ))
-        
-        # Akka swap tool
-        akka_func = self.akka_tool
-        
-        # Create Akka swap tool with async support
-        
-        tools.append(create_langchain_tool(
-            func=akka_func,
-            name="akka_swap",
-            description="Swap tokens using Akka Finance DEX aggregator on Core chain. Use this tool when the user wants to swap, exchange, convert, or trade one token for another.",
-            args_schema=AkkaSwapInput
-        ))
-        
-        return tools
+    def _create_langchain_tools(self):
+        """Create LangChain tool wrappers using shared utilities."""
+        if self.tools is None:
+            self.tools = create_defi_langchain_tools(
+                vault_address=self.vault_address,
+                include_portfolio=True
+            )
+        return self.tools
     
     async def _init_agent(self):
         """Initialize the agent if not already created."""
@@ -224,57 +134,16 @@ class SimpleAssistant:
         
         return get_prompt(prompt_data, wrapper_tag="system_prompt")
     
-    async def _get_simplified_aave_yields(self) -> List[Dict[str, Any]]:
-        """Get simplified AAVE yields data for context."""
-        try:
-            from src.config import CHAIN_CONFIG
-            
-            # Ensure session handler is initialized (which connects to DB)
-            await self._init_session_handler()
-            
-            # Get database connection
-            db = mongo_connection.db
-            
-            # Fetch all yields with database for caching
-            yields = await get_all_aave_yields(db=db)
-            
-            # Simplify the data
-            simplified_yields = []
-            for token_symbol, chain_yields in yields.items():
-                for yield_data in chain_yields:
-                    chain_id = yield_data.get('chain_id')
-                    chain_name = CHAIN_CONFIG.get(chain_id, {}).get('name', f'Chain {chain_id}')
-                    
-                    simplified_yields.append({
-                        'token': token_symbol,
-                        'chain': chain_name,
-                        'borrow_apy': round(yield_data.get('borrow_apy', 0), 2)
-                    })
-            
-            return simplified_yields
-        except Exception as e:
-            logger.warning(f"Failed to fetch AAVE yields: {e}")
-            return []
     
     async def _build_context_prompt(self, memory_data: dict = None) -> str:
         """Build a context prompt with current date and memory to append before user message."""
-        from src.config import SUPPORTED_TOKENS, CHAIN_CONFIG
-        
-        # Extract available tokens and their chains
-        available_tokens = {}
-        for token_symbol, token_info in SUPPORTED_TOKENS.items():
-            chains = []
-            for chain_id in token_info.get("addresses", {}):
-                if chain_id in CHAIN_CONFIG:
-                    chains.append(CHAIN_CONFIG[chain_id]["name"])
-            if chains:
-                available_tokens[token_symbol] = chains
-        
-        # Extract available chains
-        available_chains = [config["name"] for config in CHAIN_CONFIG.values()]
+        # Get tokens and chains info
+        tokens_and_chains = get_available_tokens_and_chains()
+        available_tokens = tokens_and_chains["available_tokens"]
+        available_chains = tokens_and_chains["available_chains"]
         
         # Get simplified AAVE yields
-        aave_yields = await self._get_simplified_aave_yields()
+        aave_yields = await get_simplified_aave_yields()
         
         context_data = {
             "current_context": {

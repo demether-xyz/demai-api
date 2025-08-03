@@ -17,7 +17,7 @@ async def main():
     vault_address = "0x25bA533C8BD1a00b1FA4cD807054d03e168dff92"
     
     # Single test task
-    task = "Move 50% of USDC to the best yield opportunity"
+    task = "Have at least 5% lending of USD on the best yield opportunity"
     
     print("Executing strategy...")
     print(f"Task: {task}")
