@@ -4,10 +4,11 @@ Simple chat assistant with portfolio viewing capabilities.
 import asyncio
 import json
 from datetime import datetime
+from typing import List, Dict, Any
 from pydantic import BaseModel, Field
 from src.tools.portfolio_tool import create_portfolio_tool
 from src.tools.research_tool import create_research_tool
-from src.tools.aave_tool import create_aave_tool
+from src.tools.aave_tool import create_aave_tool, get_all_aave_yields
 from src.tools.akka_tool import create_swap_tool
 from src.utils.ai_router_tools import create_tools_agent, create_langchain_tool
 from langchain_core.messages import HumanMessage, AIMessage
@@ -221,7 +222,33 @@ class SimpleAssistant:
         
         return get_prompt(prompt_data, wrapper_tag="system_prompt")
     
-    def _build_context_prompt(self, memory_data: dict = None) -> str:
+    async def _get_simplified_aave_yields(self) -> List[Dict[str, Any]]:
+        """Get simplified AAVE yields data for context."""
+        try:
+            from src.config import CHAIN_CONFIG
+            
+            # Fetch all yields
+            yields = await get_all_aave_yields()
+            
+            # Simplify the data
+            simplified_yields = []
+            for token_symbol, chain_yields in yields.items():
+                for yield_data in chain_yields:
+                    chain_id = yield_data.get('chain_id')
+                    chain_name = CHAIN_CONFIG.get(chain_id, {}).get('name', f'Chain {chain_id}')
+                    
+                    simplified_yields.append({
+                        'token': token_symbol,
+                        'chain': chain_name,
+                        'borrow_apy': round(yield_data.get('borrow_apy', 0), 2)
+                    })
+            
+            return simplified_yields
+        except Exception as e:
+            logger.warning(f"Failed to fetch AAVE yields: {e}")
+            return []
+    
+    async def _build_context_prompt(self, memory_data: dict = None) -> str:
         """Build a context prompt with current date and memory to append before user message."""
         from src.config import SUPPORTED_TOKENS, CHAIN_CONFIG
         
@@ -238,6 +265,9 @@ class SimpleAssistant:
         # Extract available chains
         available_chains = [config["name"] for config in CHAIN_CONFIG.values()]
         
+        # Get simplified AAVE yields
+        aave_yields = await self._get_simplified_aave_yields()
+        
         context_data = {
             "current_context": {
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC"),
@@ -248,6 +278,11 @@ class SimpleAssistant:
                     "tokens_by_chain": available_tokens,
                     "aave_tool_info": "For Aave/Colend operations, use these exact chain names and token symbols",
                     "akka_tool_info": "Akka Finance DEX aggregator is currently only available on Core chain"
+                },
+                "current_aave_lending_rates": {
+                    "description": "Current borrow APY rates for tokens on Aave/Colend",
+                    "yields": aave_yields,
+                    "note": "Use these rates to inform lending recommendations and risk assessments"
                 }
             }
         }
@@ -288,7 +323,7 @@ class SimpleAssistant:
             system_message = self._build_system_prompt()
             
             # Build context prompt with current date and memory
-            context_prompt = self._build_context_prompt(memory_data)
+            context_prompt = await self._build_context_prompt(memory_data)
             
             # Combine context with user message for better memory retention
             enhanced_message = f"{context_prompt}\n\nUser request: {message}"

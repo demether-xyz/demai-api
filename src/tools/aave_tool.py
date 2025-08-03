@@ -1,13 +1,15 @@
 """
 Aave V3 strategy implementation with contract definitions and helper functions
 """
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from web3 import Web3
 from eth_abi import encode
 import asyncio
 import logging
 import json
 import os
+from datetime import datetime, timedelta, timezone
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +147,166 @@ AAVE_DATA_PROVIDER_ABI = [
     }
 ]
 
+
+class AaveYieldCacheService:
+    """
+    Cache service for Aave yield rates with 3-hour TTL.
+    Similar to CoinGeckoCacheService but for Aave yield data.
+    """
+    
+    def __init__(self, db: Optional[AsyncIOMotorDatabase] = None, cache_ttl_hours: int = 3):
+        self.db = db
+        self.cache_ttl = timedelta(hours=cache_ttl_hours)
+        self._memory_cache: Dict[str, Dict[str, Any]] = {}
+        self._cache_lock = asyncio.Lock()
+        
+        # Initialize database indexes
+        if self.db is not None:
+            asyncio.create_task(self._ensure_indexes())
+    
+    async def _ensure_indexes(self):
+        """Ensure database indexes exist for optimal performance"""
+        if self.db is None:
+            return
+            
+        try:
+            collection = self.db.aave_yield_cache
+            await collection.create_index([("token_symbol", 1), ("chain_id", 1)], unique=True)
+            await collection.create_index("timestamp")
+            logger.info("Aave yield cache indexes ensured")
+        except Exception as e:
+            logger.error(f"Error creating Aave yield cache indexes: {e}")
+    
+    def _get_cache_key(self, token_symbol: str, chain_id: int) -> str:
+        """Generate cache key for token and chain combination"""
+        return f"{token_symbol}:{chain_id}"
+    
+    async def get_yield(self, token_symbol: str, chain_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get cached yield data for a token on specific chain.
+        Returns None if not found or expired.
+        """
+        cache_key = self._get_cache_key(token_symbol, chain_id)
+        
+        # Check memory cache first
+        if cache_key in self._memory_cache:
+            entry = self._memory_cache[cache_key]
+            if self._is_cache_valid(entry['timestamp']):
+                logger.debug(f"Memory cache hit for {token_symbol} on chain {chain_id}")
+                return entry['data']
+            else:
+                # Remove expired entry
+                async with self._cache_lock:
+                    self._memory_cache.pop(cache_key, None)
+        
+        # Check database cache
+        if self.db is not None:
+            try:
+                collection = self.db.aave_yield_cache
+                result = await collection.find_one({
+                    "token_symbol": token_symbol,
+                    "chain_id": chain_id
+                })
+                
+                if result and self._is_cache_valid(result['timestamp']):
+                    yield_data = result['data']
+                    
+                    # Update memory cache
+                    async with self._cache_lock:
+                        self._memory_cache[cache_key] = {
+                            'data': yield_data,
+                            'timestamp': result['timestamp']
+                        }
+                    
+                    logger.debug(f"Database cache hit for {token_symbol} on chain {chain_id}")
+                    return yield_data
+                elif result:
+                    # Remove expired entry
+                    await collection.delete_one({
+                        "token_symbol": token_symbol,
+                        "chain_id": chain_id
+                    })
+                    
+            except Exception as e:
+                logger.error(f"Error getting cached yield for {token_symbol} on chain {chain_id}: {e}")
+        
+        return None
+    
+    async def set_yield(self, token_symbol: str, chain_id: int, yield_data: Dict[str, Any]):
+        """Cache yield data for a token on specific chain"""
+        timestamp = datetime.now(timezone.utc)
+        cache_key = self._get_cache_key(token_symbol, chain_id)
+        
+        # Update memory cache
+        async with self._cache_lock:
+            self._memory_cache[cache_key] = {
+                'data': yield_data,
+                'timestamp': timestamp
+            }
+        
+        # Update database cache
+        if self.db is not None:
+            try:
+                collection = self.db.aave_yield_cache
+                await collection.update_one(
+                    {
+                        "token_symbol": token_symbol,
+                        "chain_id": chain_id
+                    },
+                    {
+                        "$set": {
+                            "token_symbol": token_symbol,
+                            "chain_id": chain_id,
+                            "data": yield_data,
+                            "timestamp": timestamp
+                        }
+                    },
+                    upsert=True
+                )
+                logger.debug(f"Cached yield data for {token_symbol} on chain {chain_id}")
+            except Exception as e:
+                logger.error(f"Error caching yield for {token_symbol} on chain {chain_id}: {e}")
+    
+    def _is_cache_valid(self, timestamp: datetime) -> bool:
+        """Check if cache entry is still valid based on TTL"""
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        
+        age = datetime.now(timezone.utc) - timestamp
+        return age < self.cache_ttl
+    
+    async def clear_cache(self, token_symbol: Optional[str] = None, chain_id: Optional[int] = None):
+        """Clear cache for specific token/chain or all"""
+        if token_symbol and chain_id:
+            # Clear specific token on chain
+            cache_key = self._get_cache_key(token_symbol, chain_id)
+            async with self._cache_lock:
+                self._memory_cache.pop(cache_key, None)
+            
+            if self.db is not None:
+                try:
+                    collection = self.db.aave_yield_cache
+                    await collection.delete_one({
+                        "token_symbol": token_symbol,
+                        "chain_id": chain_id
+                    })
+                    logger.info(f"Cleared cache for {token_symbol} on chain {chain_id}")
+                except Exception as e:
+                    logger.error(f"Error clearing cache: {e}")
+        else:
+            # Clear all cache
+            async with self._cache_lock:
+                self._memory_cache.clear()
+            
+            if self.db is not None:
+                try:
+                    collection = self.db.aave_yield_cache
+                    await collection.delete_many({})
+                    logger.info("Cleared all Aave yield cache")
+                except Exception as e:
+                    logger.error(f"Error clearing all cache: {e}")
+
+
 def _encode_aave_supply(asset_address: str, amount: int, on_behalf_of: str, referral_code: int = 0) -> bytes:
     """Encode Aave V3 supply function call data."""
     function_selector = Web3.keccak(text="supply(address,uint256,address,uint16)")[:4]
@@ -227,6 +389,127 @@ async def _get_aave_reserve_data(web3_instance, pool_address: str, asset_address
         logger.error(f"Error getting Aave reserve data: {e}")
         return {"error": str(e)}
 
+
+
+async def get_all_aave_yields(
+    web3_instances: Optional[Dict] = None,
+    cache_service: Optional[AaveYieldCacheService] = None,
+    db: Optional[AsyncIOMotorDatabase] = None
+) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Get current yield rates for all supported Aave tokens across all chains.
+    Fetches in parallel and uses caching to minimize RPC calls.
+    
+    Args:
+        web3_instances: Optional dict of Web3 instances by chain_id. If not provided, creates new ones.
+        cache_service: Optional cache service instance. If not provided, creates new one.
+        db: Optional database connection for cache persistence.
+        
+    Returns:
+        Dictionary mapping token symbols to list of yield data across chains
+    """
+    from config import SUPPORTED_TOKENS, CHAIN_CONFIG, RPC_ENDPOINTS
+    
+    # Initialize cache service if not provided
+    if cache_service is None:
+        cache_service = AaveYieldCacheService(db=db)
+    
+    # Initialize web3 instances if not provided
+    if web3_instances is None:
+        web3_instances = {}
+        for chain_id, rpc_url in RPC_ENDPOINTS.items():
+            try:
+                web3_instances[chain_id] = Web3(Web3.HTTPProvider(rpc_url))
+            except Exception as e:
+                logger.error(f"Failed to create Web3 instance for chain {chain_id}: {e}")
+    
+    # Collect all token/chain combinations
+    tasks = []
+    task_info = []  # Keep track of (token_symbol, chain_id) for each task
+    
+    for token_symbol, token_config in SUPPORTED_TOKENS.items():
+        for chain_id in token_config["addresses"].keys():
+            # Check if Aave is supported on this chain
+            if chain_id in AAVE_STRATEGY_CONTRACTS:
+                tasks.append(_get_yield_with_cache(
+                    web3_instances,
+                    token_symbol,
+                    chain_id,
+                    SUPPORTED_TOKENS,
+                    cache_service
+                ))
+                task_info.append((token_symbol, chain_id))
+    
+    # Execute all tasks in parallel
+    logger.info(f"Fetching yields for {len(tasks)} token/chain combinations")
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # Organize results by token symbol
+    yields_by_token = {}
+    successful_fetches = 0
+    cache_hits = 0
+    
+    for (token_symbol, chain_id), result in zip(task_info, results):
+        if isinstance(result, Exception):
+            logger.error(f"Error fetching yield for {token_symbol} on chain {chain_id}: {result}")
+            continue
+        
+        if result and "error" not in result:
+            if token_symbol not in yields_by_token:
+                yields_by_token[token_symbol] = []
+            
+            yields_by_token[token_symbol].append(result)
+            successful_fetches += 1
+            
+            # Check if this was a cache hit
+            if result.get("from_cache"):
+                cache_hits += 1
+    
+    logger.info(f"Successfully fetched {successful_fetches}/{len(tasks)} yields ({cache_hits} from cache)")
+    
+    return yields_by_token
+
+
+async def _get_yield_with_cache(
+    web3_instances: Dict,
+    token_symbol: str,
+    chain_id: int,
+    supported_tokens: Dict,
+    cache_service: AaveYieldCacheService
+) -> Dict[str, Any]:
+    """
+    Get yield data with caching support.
+    
+    Args:
+        web3_instances: Dictionary of Web3 instances by chain_id
+        token_symbol: Token symbol
+        chain_id: Chain ID
+        supported_tokens: Dictionary of supported tokens from config
+        cache_service: Cache service instance
+        
+    Returns:
+        Yield data dictionary with cache status
+    """
+    # Try to get from cache first
+    cached_data = await cache_service.get_yield(token_symbol, chain_id)
+    if cached_data:
+        cached_data["from_cache"] = True
+        return cached_data
+    
+    # Fetch fresh data
+    yield_data = await get_aave_current_yield(
+        web3_instances,
+        token_symbol,
+        chain_id,
+        supported_tokens
+    )
+    
+    # Cache successful results
+    if yield_data and "error" not in yield_data:
+        yield_data["from_cache"] = False
+        await cache_service.set_yield(token_symbol, chain_id, yield_data)
+    
+    return yield_data
 
 
 async def get_aave_current_yield(
