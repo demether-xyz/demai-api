@@ -4,7 +4,7 @@ Simple chat assistant with portfolio viewing capabilities.
 import asyncio
 import json
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Union
 from pydantic import BaseModel, Field
 from src.tools.portfolio_tool import create_portfolio_tool
 from src.tools.research_tool import create_research_tool
@@ -298,8 +298,17 @@ class SimpleAssistant:
         
         return get_prompt(context_data, wrapper_tag="context_update")
     
-    async def chat(self, message: str, user_id: str) -> str:
-        """Process a chat message with session history and return response."""
+    async def chat(self, message: str, user_id: str, return_intermediate_steps: bool = False) -> Union[str, Dict[str, Any]]:
+        """Process a chat message with session history and return response.
+        
+        Args:
+            message: The user's message
+            user_id: The user/session ID
+            return_intermediate_steps: If True, returns a dict with intermediate steps instead of just the response
+            
+        Returns:
+            Either a string response or a dict with 'response' and 'intermediate_steps'
+        """
         try:
             # Initialize agent and session handler if needed
             await self._init_agent()
@@ -363,6 +372,31 @@ class SimpleAssistant:
             assistant_response = result["final_output"]
             memory_updates = {}
             
+            # Format intermediate steps if requested
+            intermediate_messages = []
+            if return_intermediate_steps and result.get("intermediate_steps"):
+                for i, (action, observation) in enumerate(result["intermediate_steps"]):
+                    # Format tool invocation
+                    tool_msg = f"Invoking: `{action.tool}` with `{action.tool_input}`"
+                    intermediate_messages.append({
+                        "type": "tool_invocation",
+                        "step": i + 1,
+                        "tool": action.tool,
+                        "input": action.tool_input,
+                        "message": tool_msg
+                    })
+                    
+                    # Format tool response
+                    intermediate_messages.append({
+                        "type": "tool_response",
+                        "step": i + 1,
+                        "tool": action.tool,
+                        "output": observation,
+                        "message": str(observation)
+                    })
+                    
+                    logger.info(f"Step {i+1}: Tool '{action.tool}' called with input: {action.tool_input}")
+            
             # Try to extract JSON from response
             extracted_json = extract_json_content(assistant_response)
             
@@ -399,7 +433,15 @@ class SimpleAssistant:
                 ]
             )
             
-            return actual_reply
+            # Return based on requested format
+            if return_intermediate_steps:
+                return {
+                    "response": actual_reply,
+                    "intermediate_steps": intermediate_messages,
+                    "total_steps": result.get("total_steps", 0)
+                }
+            else:
+                return actual_reply
                 
         except Exception as e:
             logger.error(f"Chat error: {e}")
@@ -413,7 +455,7 @@ async def create_assistant(vault_address: str, model: str = "google/gemini-2.5-f
 
 
 # Main chatbot function expected by main.py
-async def run_chatbot(message: str, chat_id: str, vault_address: str = None) -> str:
+async def run_chatbot(message: str, chat_id: str, vault_address: str = None, return_intermediate_steps: bool = False) -> Union[str, Dict[str, Any]]:
     """
     Run the chatbot with a message and return the response.
     
@@ -421,9 +463,10 @@ async def run_chatbot(message: str, chat_id: str, vault_address: str = None) -> 
         message: User's message
         chat_id: Chat/user identifier (wallet address for chat history)
         vault_address: Vault address - the unique ID for portfolio context
+        return_intermediate_steps: If True, returns dict with response and intermediate steps
     
     Returns:
-        Assistant's response
+        Either assistant's response string or dict with response and intermediate steps
     """
     try:
         # The vault address is the unique identifier for portfolio context
@@ -435,7 +478,7 @@ async def run_chatbot(message: str, chat_id: str, vault_address: str = None) -> 
         assistant = SimpleAssistant(vault_address=vault_address)
         
         # Process the message with chat_id as user_id for session management
-        response = await assistant.chat(message, user_id=chat_id)
+        response = await assistant.chat(message, user_id=chat_id, return_intermediate_steps=return_intermediate_steps)
         
         return response
         

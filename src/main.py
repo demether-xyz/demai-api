@@ -67,6 +67,7 @@ class ChatRequest(BaseModel):
     wallet_address: str  # Wallet address for authentication
     vault_address: Optional[str] = None  # Vault address for portfolio context
     signature: str
+    return_intermediate_steps: Optional[bool] = False  # Return intermediate tool calls
 
 class PortfolioRequest(BaseModel):
     vault_address: Optional[str] = None  # Make vault address optional
@@ -118,9 +119,34 @@ async def chat_endpoint(request: ChatRequest):
     response = await run_chatbot(
         message=request.message, 
         chat_id=request.wallet_address,  # Use wallet address for chat history consistency
-        vault_address=request.vault_address
+        vault_address=request.vault_address,
+        return_intermediate_steps=request.return_intermediate_steps
     )
-    return {"response": response}
+    
+    # If intermediate steps were requested, response will be a dict
+    if request.return_intermediate_steps and isinstance(response, dict):
+        # Format the response with messages array
+        messages = []
+        
+        # Add intermediate messages
+        for step in response.get("intermediate_steps", []):
+            messages.append({
+                "type": step["type"],
+                "content": step["message"],
+                "tool": step.get("tool"),
+                "step": step.get("step")
+            })
+        
+        # Add final response
+        messages.append({
+            "type": "final",
+            "content": response["response"]
+        })
+        
+        return {"response": {"messages": messages, "text": response["response"]}}
+    else:
+        # Standard response format for backward compatibility
+        return {"response": response}
 
 @app.post("/portfolio/")
 async def portfolio_endpoint(request: PortfolioRequest):
