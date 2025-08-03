@@ -10,6 +10,9 @@ from services.portfolio_service import PortfolioService
 from contextlib import asynccontextmanager
 from src.utils.mongo_connection import mongo_connection
 from src.services.portfolio_data_handler import PortfolioDataHandler
+from src.services.task_manager import TaskManager
+from src.services.strategies import get_all_strategies
+from src.utils.aave_yields_utils import get_simplified_aave_yields
 
 # Global instances
 portfolio_service = None
@@ -30,7 +33,7 @@ async def lifespan(app: FastAPI):
     try:
         db = await mongo_connection.connect()
         
-        global portfolio_service, portfolio_data_handler
+        global portfolio_service, portfolio_data_handler, task_manager
         
         # Initialize portfolio data handler
         portfolio_data_handler = PortfolioDataHandler(db)
@@ -41,6 +44,12 @@ async def lifespan(app: FastAPI):
         portfolio_service = PortfolioService(db, cache_ttl_seconds=3600)  # 60 minute cache
         app.state.portfolio_service = portfolio_service
         logger.info("Portfolio service initialized on startup")
+        
+        # Initialize task manager
+        task_manager = TaskManager(db)
+        await task_manager.create_indexes()
+        app.state.task_manager = task_manager
+        logger.info("Task manager initialized on startup")
         
     except Exception as e:
         logger.error(f"Failed to initialize MongoDB connection: {e}")
@@ -75,23 +84,27 @@ class PortfolioRequest(BaseModel):
     signature: str
     refresh: Optional[bool] = False
 
-class CreateTaskRequest(BaseModel):
+class CreateStrategyRequest(BaseModel):
     wallet_address: str
     vault_address: str
     signature: str
     strategy_id: str
-    amount: str  # Amount in wei
-    chain_id: int
-    params: Optional[Dict[str, Any]] = None
-    interval_hours: Optional[int] = None
+    percentage: int  # Percentage of funds to allocate (1-100)
+    chain: str  # Chain name
+    enabled: Optional[bool] = True
 
-class TaskActionRequest(BaseModel):
+class UpdateStrategyRequest(BaseModel):
+    wallet_address: str
+    signature: str
+    task_id: str
+    percentage: Optional[int] = None
+    enabled: Optional[bool] = None
+
+class DeleteStrategyRequest(BaseModel):
     wallet_address: str
     signature: str
     task_id: str
 
-class RunTasksRequest(BaseModel):
-    secret_key: str  # Simple auth for cron job
 
 def verify_signature(message: str, signature: str, address: str) -> bool:
     try:
@@ -192,20 +205,40 @@ async def portfolio_endpoint(request: PortfolioRequest):
 
 @app.get("/strategies/")
 async def list_strategies():
-    """List all available strategies"""
-    task_manager = getattr(app.state, 'task_manager', None)
-    if task_manager is None:
-        raise HTTPException(status_code=500, detail="Task manager not initialized")
+    """List all available strategies with current yield information"""
+    strategies = get_all_strategies()
     
-    strategies = []
-    for strategy in task_manager.strategies.values():
-        strategies.append(strategy.to_dict())
+    # Get current yields
+    try:
+        yields = await get_simplified_aave_yields()
+        
+        # Create a lookup map for yields by token and chain
+        yield_map = {}
+        for yield_data in yields:
+            key = f"{yield_data['token']}_{yield_data['chain']}"
+            yield_map[key] = yield_data['borrow_apy']
+        
+        # Enhance strategies with yield information
+        for strategy in strategies:
+            strategy['current_yields'] = {}
+            for token in strategy.get('tokens', []):
+                key = f"{token}_{strategy['chain']}"
+                if key in yield_map:
+                    strategy['current_yields'][token] = yield_map[key]
+                else:
+                    strategy['current_yields'][token] = 0.0
+                    
+    except Exception as e:
+        logger.warning(f"Failed to fetch yields for strategies: {e}")
+        # Add empty yields if fetch fails
+        for strategy in strategies:
+            strategy['current_yields'] = {token: 0.0 for token in strategy.get('tokens', [])}
     
     return {"strategies": strategies}
 
-@app.post("/strategies/tasks/create")
-async def create_strategy_task(request: CreateTaskRequest):
-    """Create a new strategy task for a user"""
+@app.post("/strategies/subscribe")
+async def subscribe_to_strategy(request: CreateStrategyRequest):
+    """Subscribe to a strategy"""
     # Verify signature
     is_valid = verify_signature(
         message=DEMAI_AUTH_MESSAGE,
@@ -225,21 +258,20 @@ async def create_strategy_task(request: CreateTaskRequest):
             user_address=request.wallet_address,
             vault_address=request.vault_address,
             strategy_id=request.strategy_id,
-            amount=request.amount,
-            chain_id=request.chain_id,
-            params=request.params,
-            interval_hours=request.interval_hours
+            percentage=request.percentage,
+            chain=request.chain,
+            enabled=request.enabled
         )
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Error creating task: {e}")
-        raise HTTPException(status_code=500, detail="Failed to create task")
+        logger.error(f"Error creating strategy subscription: {e}")
+        raise HTTPException(status_code=500, detail="Failed to subscribe to strategy")
 
-@app.get("/strategies/tasks/")
-async def get_user_tasks(wallet_address: str, signature: str):
-    """Get all tasks for a user"""
+@app.get("/strategies/subscriptions")
+async def get_user_strategies(wallet_address: str, signature: str):
+    """Get all strategy subscriptions for a user"""
     # Verify signature
     is_valid = verify_signature(
         message=DEMAI_AUTH_MESSAGE,
@@ -255,11 +287,11 @@ async def get_user_tasks(wallet_address: str, signature: str):
         raise HTTPException(status_code=500, detail="Task manager not initialized")
     
     tasks = await task_manager.get_user_tasks(wallet_address)
-    return {"tasks": tasks}
+    return {"subscriptions": tasks}
 
-@app.post("/strategies/tasks/pause")
-async def pause_task(request: TaskActionRequest):
-    """Pause a user's task"""
+@app.put("/strategies/subscriptions/update")
+async def update_strategy_subscription(request: UpdateStrategyRequest):
+    """Update a strategy subscription"""
     # Verify signature
     is_valid = verify_signature(
         message=DEMAI_AUTH_MESSAGE,
@@ -274,38 +306,23 @@ async def pause_task(request: TaskActionRequest):
     if task_manager is None:
         raise HTTPException(status_code=500, detail="Task manager not initialized")
     
-    success = await task_manager.pause_task(request.task_id, request.wallet_address)
-    if not success:
-        raise HTTPException(status_code=404, detail="Task not found or unauthorized")
-    
-    return {"success": True}
+    try:
+        success = await task_manager.update_task(
+            task_id=request.task_id,
+            user_address=request.wallet_address,
+            percentage=request.percentage,
+            enabled=request.enabled
+        )
+        if not success:
+            raise HTTPException(status_code=404, detail="Strategy subscription not found or unauthorized")
+        
+        return {"success": True}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
-@app.post("/strategies/tasks/resume")
-async def resume_task(request: TaskActionRequest):
-    """Resume a paused task"""
-    # Verify signature
-    is_valid = verify_signature(
-        message=DEMAI_AUTH_MESSAGE,
-        signature=request.signature,
-        address=request.wallet_address
-    )
-    
-    if not is_valid:
-        raise HTTPException(status_code=401, detail="Invalid signature or wallet address")
-    
-    task_manager = getattr(app.state, 'task_manager', None)
-    if task_manager is None:
-        raise HTTPException(status_code=500, detail="Task manager not initialized")
-    
-    success = await task_manager.resume_task(request.task_id, request.wallet_address)
-    if not success:
-        raise HTTPException(status_code=404, detail="Task not found or unauthorized")
-    
-    return {"success": True}
-
-@app.post("/strategies/tasks/delete")
-async def delete_task(request: TaskActionRequest):
-    """Delete a task"""
+@app.delete("/strategies/subscriptions/delete")
+async def delete_strategy_subscription(request: DeleteStrategyRequest):
+    """Delete a strategy subscription"""
     # Verify signature
     is_valid = verify_signature(
         message=DEMAI_AUTH_MESSAGE,
@@ -322,30 +339,9 @@ async def delete_task(request: TaskActionRequest):
     
     success = await task_manager.delete_task(request.task_id, request.wallet_address)
     if not success:
-        raise HTTPException(status_code=404, detail="Task not found or unauthorized")
+        raise HTTPException(status_code=404, detail="Strategy subscription not found or unauthorized")
     
     return {"success": True}
-
-@app.post("/strategies/tasks/run")
-async def run_due_tasks(request: RunTasksRequest):
-    """Run all due tasks - called by cron job"""
-    # Simple secret key auth for cron job
-    import os
-    expected_secret = os.getenv("CRON_SECRET_KEY", "default-secret-key")
-    
-    if request.secret_key != expected_secret:
-        raise HTTPException(status_code=401, detail="Invalid secret key")
-    
-    task_manager = getattr(app.state, 'task_manager', None)
-    if task_manager is None:
-        raise HTTPException(status_code=500, detail="Task manager not initialized")
-    
-    try:
-        results = await task_manager.run_due_tasks()
-        return results
-    except Exception as e:
-        logger.error(f"Error running tasks: {e}")
-        raise HTTPException(status_code=500, detail="Failed to run tasks")
 
 if __name__ == "__main__":
     import uvicorn
