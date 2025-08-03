@@ -85,7 +85,7 @@ class StrategyExecutor:
                 "Calculate exact amounts for percentage-based requests",
                 "Chain multiple operations together as needed",
                 "Complete the entire task without asking for clarification",
-                "Create a brief, user-friendly memo summarizing key actions and amounts for SMS notification"
+                "Create a brief, user-friendly memo summarizing key actions and amounts for a notification"
             ],
             
             "response_format": {
@@ -96,7 +96,7 @@ class StrategyExecutor:
                     "actions_taken": ["List of actions performed"],
                     "transactions": ["List of transaction hashes with chain info"],
                     "result": "Summary of what was accomplished",
-                    "memo": "Brief SMS-friendly summary (max 160 chars) of key action taken and outcome. Example: 'Swapped 500 USDT to USDC and deposited at 5.2% APY on Core chain'",
+                    "memo": "Brief message friendly summary (max 160 chars) of key action taken and outcome.",
                     "error": "Error message if failed (optional)"
                 }
             }
@@ -236,7 +236,7 @@ class StrategyExecutor:
 
 
 # Convenience function for strategy execution
-async def execute_defi_strategy(task: str, vault_address: str, model: str = "google/gemini-2.5-flash") -> Dict[str, Any]:
+async def execute_defi_strategy(task: str, vault_address: str, model: str = "google/gemini-2.5-pro") -> Dict[str, Any]:
     """Execute a DeFi strategy task.
     
     Args:

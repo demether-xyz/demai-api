@@ -405,8 +405,12 @@ async def execute_next_task():
     if task_manager is None:
         raise HTTPException(status_code=500, detail="Task manager not initialized")
     
-    # Use task executor
-    task_executor = TaskExecutor(task_manager)
+    # Get telegram helper and binding if available
+    telegram_helper = getattr(app.state, 'telegram_helper', None)
+    telegram_binding = getattr(app.state, 'telegram_binding', None)
+    
+    # Use task executor with telegram support
+    task_executor = TaskExecutor(task_manager, telegram_helper, telegram_binding)
     return await task_executor.execute_next_task()
 
 @app.post("/telegram")

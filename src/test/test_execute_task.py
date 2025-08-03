@@ -16,7 +16,7 @@ from src.utils.mongo_connection import mongo_connection
 async def main():
     """Test executing a specific task."""
     # TODO: Replace with your actual task ID
-    TASK_ID = "688f01b0f74075a09f7da22b"  # e.g., "6745abc123def456789"
+    TASK_ID = "688f0a2fe9fd614af2ed5565"  # e.g., "6745abc123def456789"
     
     print(f"🚀 Testing task execution for ID: {TASK_ID}")
     
