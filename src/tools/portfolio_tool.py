@@ -52,9 +52,12 @@ def create_portfolio_tool(
     portfolio_service = PortfolioService(db=db)
     
     # Create the LLM-callable function
-    async def get_portfolio() -> str:
+    async def get_portfolio(force_long_refresh: bool = False) -> str:
         """
         Get portfolio information for the configured vault.
+        
+        Args:
+            force_long_refresh: Force a complete refresh of portfolio data (slow operation - only use after major transactions)
         
         Returns:
             JSON string with portfolio data
@@ -63,7 +66,8 @@ def create_portfolio_tool(
             # Get portfolio summary for the configured vault
             # Note: get_portfolio_for_llm defaults to refresh=False to use cached data when available
             portfolio_data = await portfolio_service.get_portfolio_for_llm(
-                vault_address=vault_address
+                vault_address=vault_address,
+                refresh=force_long_refresh
             )
             
             # Check for errors
@@ -100,6 +104,12 @@ def create_portfolio_tool(
             "name": "portfolio_viewer",
             "description": f"Get portfolio balances and values for vault {vault_address}",
             "vault": vault_address,
-            "parameters": {}
+            "parameters": {
+                "force_long_refresh": {
+                    "type": "boolean",
+                    "description": "Force a complete refresh of portfolio data. This is a slow operation - only use after major transactions or when explicitly requested by the user. Normally, cached data is sufficient.",
+                    "default": False
+                }
+            }
         }
     }

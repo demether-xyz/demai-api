@@ -229,3 +229,51 @@ async def create_tools_agent(
     agent = LangChainToolsAgent(tools=tools, model_id=model_id, verbose=verbose)
 
     return agent
+
+def create_langchain_tool(func: callable, name: Optional[str] = None, description: Optional[str] = None, args_schema: Optional[Any] = None):
+    """Helper function to create a LangChain tool from a regular Python function.
+
+    Automatically detects if the function is sync or async and creates the appropriate tool.
+
+    Args:
+        func: The Python function to convert to a LangChain tool
+        name: Optional name for the tool (defaults to function name)
+        description: Optional description for the tool (defaults to function docstring)
+        args_schema: Optional Pydantic model for input validation
+
+    Returns:
+        A LangChain StructuredTool
+    """
+    try:
+        import inspect
+
+        from langchain_core.tools import StructuredTool
+
+        # Use provided name or function name
+        tool_name = name or func.__name__
+
+        # Use provided description or function docstring
+        tool_description = description or (func.__doc__ or f"Tool for {tool_name}")
+
+        # Check if function is async
+        if inspect.iscoroutinefunction(func):
+            # Create async tool
+            return StructuredTool.from_function(
+                func=None,  # No sync function
+                coroutine=func,  # Async function
+                name=tool_name, 
+                description=tool_description,
+                args_schema=args_schema
+            )
+        else:
+            # Create sync tool
+            return StructuredTool.from_function(
+                func=func,  # Sync function
+                coroutine=None,  # No async function
+                name=tool_name, 
+                description=tool_description,
+                args_schema=args_schema
+            )
+
+    except ImportError:
+        raise ImportError("LangChain is required for create_langchain_tool function")

@@ -3,15 +3,15 @@ Simple chat assistant with portfolio viewing capabilities.
 """
 import asyncio
 import json
-import os
 from datetime import datetime
+from pydantic import BaseModel, Field
 from src.tools.portfolio_tool import create_portfolio_tool
 from src.tools.research_tool import create_research_tool
 from src.tools.aave_tool import create_aave_tool
 from src.tools.akka_tool import create_swap_tool
-from src.utils.ai_router_tools import create_tools_agent
-from langchain_core.tools import StructuredTool
+from src.utils.ai_router_tools import create_tools_agent, create_langchain_tool
 from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.tools import StructuredTool
 from src.utils.json_parser import extract_json_content
 from src.config import logger
 from src.services.chat_session_handler import ChatSessionHandler
@@ -64,42 +64,22 @@ class SimpleAssistant:
         # Portfolio tool
         portfolio_func = self.portfolio_tool
         
-        # Sync wrapper for the async portfolio tool
-        def sync_portfolio_tool(*args, **kwargs) -> str:
-            """Get portfolio information."""
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                return loop.run_until_complete(portfolio_func())
-            finally:
-                loop.close()
+        # Define input schema for portfolio tool
+        class PortfolioInput(BaseModel):
+            force_long_refresh: bool = Field(default=False, description="Force a complete refresh of portfolio data. This is a slow operation - only use after major transactions or when explicitly requested. Normally, cached data is sufficient.")
         
-        tools.append(StructuredTool(
+        # Create portfolio tool using helper function
+        tools.append(create_langchain_tool(
+            func=portfolio_func,
             name="view_portfolio",
             description="Get portfolio balances and holdings across all chains",
-            func=sync_portfolio_tool,
-            args_schema=None
+            args_schema=PortfolioInput
         ))
         
         # Research tool
         research_func = self.research_tool
         
-        # Sync wrapper for the async research tool
-        def sync_research_tool(*args, **kwargs) -> str:
-            """Perform research on a topic."""
-            # Extract query from kwargs or args
-            query = kwargs.get('query', args[0] if args else None)
-            if not query:
-                return json.dumps({"error": "Query parameter is required"})
-                
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                return loop.run_until_complete(research_func(query))
-            finally:
-                loop.close()
-        
-        from pydantic import BaseModel, Field
+        # Define input schema for research tool
         
         class ResearchInput(BaseModel):
             query: str = Field(description="The research query or question to investigate")
@@ -116,84 +96,34 @@ class SimpleAssistant:
             dst_token: str = Field(description="The destination token symbol to swap to")
             amount: float = Field(description="The amount of source token to swap")
         
-        tools.append(StructuredTool(
+        tools.append(create_langchain_tool(
+            func=research_func,
             name="research",
             description="Perform web research and get real-time information on any topic",
-            func=sync_research_tool,
             args_schema=ResearchInput
         ))
         
         # Aave tool
         aave_func = self.aave_tool
         
-        # Sync wrapper for the async Aave tool
-        def sync_aave_tool(**kwargs) -> str:
-            """Execute Aave lending operation (supply or withdraw)."""
-            # Handle different parameter formats
-            if 'kwargs' in kwargs:
-                params = kwargs['kwargs']
-            else:
-                params = kwargs
-                
-            # Extract parameters
-            chain_name = params.get('chain_name') or params.get('chain')
-            token_symbol = params.get('token_symbol') or params.get('token')
-            amount = float(params.get('amount', 0))
-            action = params.get('action', 'supply')
-            
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                return loop.run_until_complete(aave_func(
-                    chain_name=chain_name,
-                    token_symbol=token_symbol,
-                    amount=amount,
-                    action=action
-                ))
-            finally:
-                loop.close()
+        # Create Aave tool with async support
         
-        tools.append(StructuredTool(
+        tools.append(create_langchain_tool(
+            func=aave_func,
             name="aave_lending",
             description="Supply or withdraw tokens on Aave V3 (Arbitrum) or Colend (Core chain). Use this tool when the user wants to lend tokens to Aave/Colend or withdraw tokens from Aave/Colend.",
-            func=sync_aave_tool,
             args_schema=AaveLendingInput
         ))
         
         # Akka swap tool
         akka_func = self.akka_tool
         
-        # Sync wrapper for the async Akka tool
-        def sync_akka_tool(**kwargs) -> str:
-            """Execute token swap using Akka Finance DEX aggregator."""
-            # Handle different parameter formats
-            if 'kwargs' in kwargs:
-                params = kwargs['kwargs']
-            else:
-                params = kwargs
-                
-            # Extract parameters
-            chain_name = params.get('chain_name') or params.get('chain')
-            src_token = params.get('src_token') or params.get('source_token')
-            dst_token = params.get('dst_token') or params.get('destination_token')
-            amount = float(params.get('amount', 0))
-            
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                return loop.run_until_complete(akka_func(
-                    chain_name=chain_name,
-                    src_token=src_token,
-                    dst_token=dst_token,
-                    amount=amount
-                ))
-            finally:
-                loop.close()
+        # Create Akka swap tool with async support
         
-        tools.append(StructuredTool(
+        tools.append(create_langchain_tool(
+            func=akka_func,
             name="akka_swap",
             description="Swap tokens using Akka Finance DEX aggregator on Core chain. Use this tool when the user wants to swap, exchange, convert, or trade one token for another.",
-            func=sync_akka_tool,
             args_schema=AkkaSwapInput
         ))
         
@@ -234,7 +164,7 @@ class SimpleAssistant:
             "available_tools": [
                 {
                     "name": "view_portfolio",
-                    "description": "Analyze the user's current DeFi positions, balances, and performance metrics across all supported chains"
+                    "description": "Analyze the user's current DeFi positions, balances, and performance metrics across all supported chains. Uses cached data for fast response. Only use force_long_refresh=true for major transactions or when explicitly requested."
                 },
                 {
                     "name": "research", 
