@@ -4,8 +4,8 @@ from pydantic import BaseModel
 from src.services.assistant import run_chatbot
 from eth_account.messages import encode_defunct
 from web3 import Web3
-from typing import Optional, List, Dict, Any
-from config import logger
+from typing import Optional, List, Dict, Any, Union
+from config import logger, TELEGRAM_BOT_TOKEN
 from services.portfolio_service import PortfolioService
 from contextlib import asynccontextmanager
 from src.utils.mongo_connection import mongo_connection
@@ -14,11 +14,13 @@ from src.services.task_manager import TaskManager
 from src.services.strategies import get_all_strategies
 from src.utils.aave_yields_utils import get_simplified_aave_yields
 from src.services.task_executor import TaskExecutor
+from src.utils.telegram_helper import TelegramHelper
 
 # Global instances
 portfolio_service = None
 task_manager = None
 portfolio_data_handler = None
+telegram_helper = None
 
 # Auth message that must match frontend DEMAI_AUTH_MESSAGE
 DEMAI_AUTH_MESSAGE = """Welcome to demAI!
@@ -51,6 +53,15 @@ async def lifespan(app: FastAPI):
         await task_manager.create_indexes()
         app.state.task_manager = task_manager
         logger.info("Task manager initialized on startup")
+        
+        # Initialize Telegram helper if token is available
+        global telegram_helper
+        if TELEGRAM_BOT_TOKEN:
+            telegram_helper = TelegramHelper(TELEGRAM_BOT_TOKEN)
+            app.state.telegram_helper = telegram_helper
+            logger.info("Telegram helper initialized on startup")
+        else:
+            logger.warning("TELEGRAM_BOT_TOKEN not found in environment variables")
         
     except Exception as e:
         logger.error(f"Failed to initialize MongoDB connection: {e}")
@@ -116,29 +127,35 @@ def verify_signature(message: str, signature: str, address: str) -> bool:
     except Exception:
         return False
 
-@app.post("/chat/")
-async def chat_endpoint(request: ChatRequest):
-    # Verify the signature with the auth message from frontend
-    is_valid = verify_signature(
-        message=DEMAI_AUTH_MESSAGE,
-        signature=request.signature,
-        address=request.wallet_address
-    )
+async def _process_chat_message(
+    message: str,
+    chat_id: str,
+    vault_address: str = None,
+    return_intermediate_steps: bool = False
+) -> Union[str, Dict[str, Any]]:
+    """
+    Internal function to process chat messages.
+    Shared between /chat endpoint and telegram webhook.
     
-    if not is_valid:
-        raise HTTPException(status_code=401, detail="Invalid signature or wallet address")
-
+    Args:
+        message: User's message
+        chat_id: Chat/user identifier
+        vault_address: Vault address for portfolio context
+        return_intermediate_steps: If True, returns dict with response and intermediate steps
+    
+    Returns:
+        Either response string or dict with response and intermediate steps
+    """
     # Run the chatbot with the user's message and vault address
-    # The assistant.py has hardcoded window list, no need to pass from frontend
     response = await run_chatbot(
-        message=request.message, 
-        chat_id=request.wallet_address,  # Use wallet address for chat history consistency
-        vault_address=request.vault_address,
-        return_intermediate_steps=request.return_intermediate_steps
+        message=message, 
+        chat_id=chat_id,
+        vault_address=vault_address,
+        return_intermediate_steps=return_intermediate_steps
     )
     
     # If intermediate steps were requested, response will be a dict
-    if request.return_intermediate_steps and isinstance(response, dict):
+    if return_intermediate_steps and isinstance(response, dict):
         # Format the response with messages array
         messages = []
         
@@ -157,9 +174,34 @@ async def chat_endpoint(request: ChatRequest):
             "content": response["response"]
         })
         
-        return {"response": {"messages": messages, "text": response["response"]}}
+        return {"messages": messages, "text": response["response"]}
     else:
-        # Standard response format for backward compatibility
+        # Standard response format
+        return response
+
+@app.post("/chat/")
+async def chat_endpoint(request: ChatRequest):
+    # Verify the signature with the auth message from frontend
+    is_valid = verify_signature(
+        message=DEMAI_AUTH_MESSAGE,
+        signature=request.signature,
+        address=request.wallet_address
+    )
+    
+    if not is_valid:
+        raise HTTPException(status_code=401, detail="Invalid signature or wallet address")
+
+    response = await _process_chat_message(
+        message=request.message,
+        chat_id=request.wallet_address,  # Use wallet address for chat history consistency
+        vault_address=request.vault_address,
+        return_intermediate_steps=request.return_intermediate_steps
+    )
+    
+    # Wrap response for API compatibility
+    if request.return_intermediate_steps and isinstance(response, dict):
+        return {"response": response}
+    else:
         return {"response": response}
 
 @app.post("/portfolio/")
@@ -358,6 +400,50 @@ async def execute_next_task():
     # Use task executor
     task_executor = TaskExecutor(task_manager)
     return await task_executor.execute_next_task()
+
+@app.post("/telegram")
+async def telegram_webhook(request: Dict[str, Any]):
+    """Handle incoming Telegram webhook updates"""
+    telegram_helper = getattr(app.state, 'telegram_helper', None)
+    if telegram_helper is None:
+        raise HTTPException(status_code=500, detail="Telegram bot not initialized")
+    
+    try:
+        # Process the update
+        processed_data = await telegram_helper.process_update(request)
+        
+        if processed_data and processed_data.get("content"):
+            chat_id = processed_data["chat_id"]
+            user_message = processed_data["content"]
+            
+            # Hardcoded test values for now
+            test_wallet = "0x55b3d73e525227A7F0b25e28e17c1E94006A25dd"
+            test_vault = "0x25bA533C8BD1a00b1FA4cD807054d03e168dff92"
+            
+            try:
+                # Use the shared chat processing logic
+                response = await _process_chat_message(
+                    message=user_message,
+                    chat_id=test_wallet,  # Use test wallet as chat ID for internal system
+                    vault_address=test_vault,
+                    return_intermediate_steps=False  # Simple response for telegram
+                )
+                
+                # Send the response back to the user using telegram chat_id
+                await telegram_helper.send_message(chat_id, response)
+                
+            except Exception as chat_error:
+                logger.error(f"Error processing chat message: {chat_error}")
+                error_message = "Sorry, I encountered an error processing your message. Please try again."
+                await telegram_helper.send_message(chat_id, error_message)
+            
+            return {"ok": True}
+        
+        return {"ok": True, "message": "No message to process"}
+        
+    except Exception as e:
+        logger.error(f"Error processing Telegram webhook: {e}")
+        return {"ok": False, "error": str(e)}
 
 if __name__ == "__main__":
     import uvicorn

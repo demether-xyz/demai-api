@@ -25,6 +25,7 @@ KEYCHAIN_SECRETS = [
     ("pancake", "MONGO_CONNECTION", None),
 ]
 
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 def load_keychain_secrets():
     """Load secrets from keychain if enabled"""

@@ -25,6 +25,8 @@ aiohttp = ">=3.8.0,<4.0.0"
 python-dotenv = ">=1.0.0,<2.0.0"
 eth-abi = ">=5.0.0,<6.0.0"
 motor = ">=3.3.0,<4.0.0"
+python-telegram-bot = "^22.3"
+chatgpt-md-converter = "^0.3.6"
 
 [tool.poetry.group.dev.dependencies]
 autoflake = "^2.3.1"
