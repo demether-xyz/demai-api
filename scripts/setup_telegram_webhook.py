@@ -21,7 +21,7 @@ async def setup_webhook():
     
     # Hardcode your webhook URL here
     # Replace with your actual domain/ngrok URL
-    WEBHOOK_URL = "https://c2a7185d9ad8.ngrok-free.app/telegram"  # TODO: Replace with your actual URL
+    WEBHOOK_URL = "https://demai-api-457342191796.europe-west1.run.app/telegram"  # TODO: Replace with your actual URL
     
     try:
         # Initialize bot

@@ -100,9 +100,11 @@ class SimpleAssistant:
             ],
             
             "action_guidelines": [
+                "CRITICAL VERIFICATION: Before ANY deposit/lending operation, ALWAYS check portfolio balance first and verify the user has sufficient tokens. If the requested amount exceeds their balance, ask: 'I notice you want to deposit X TOKEN but you only have Y TOKEN available. Would you like to: 1) Deposit your full balance of Y TOKEN instead, or 2) Deposit a different amount?'",
                 "For yield optimization requests: First check portfolio, then use context yield data (not research) to identify best opportunities, calculate exact amounts, execute swaps if needed, then deposit",
                 "For percentage-based requests: Calculate exact token amounts based on current portfolio balances",
                 "For 'best yield' requests: Use the current_aave_lending_rates in context to identify highest APY opportunities",
+                "SAFETY CHECKS: Before executing potentially risky operations (depositing >80% of balance, swapping all tokens, withdrawing large amounts), confirm with user: 'This will [describe action]. Are you sure you want to proceed?'",
                 "Always develop a clear step-by-step plan before executing complex strategies",
                 "Research tool is for validation or additional info only - primary decisions should use context data",
                 "IMPORTANT: Cross-chain transfers are NOT supported. You can only: 1) Swap tokens on Core chain via Akka, 2) Lend on Arbitrum via Aave, 3) Lend on Core via Colend. To optimize yields across chains, work with existing balances on each chain"
