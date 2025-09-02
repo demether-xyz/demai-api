@@ -21,7 +21,19 @@ class MongoConnection:
         if self._db is not None:
             return self._db
             
-        connection_string = f"{os.getenv('MONGO_CONNECTION')}/demai"
+        base_connection = os.getenv('MONGO_CONNECTION')
+        # Remove existing database name and trailing slash if present
+        if '/' in base_connection and not base_connection.endswith('//'):
+            # Split by '?' first to handle query parameters
+            parts = base_connection.split('?')
+            base_url = parts[0].rstrip('/')
+            # Remove database name (everything after the last '/')
+            if base_url.count('/') > 2:  # mongodb://host:port has 2 slashes, anything more is database
+                base_url = '/'.join(base_url.split('/')[:-1])
+            # Reconstruct with query params if they existed
+            base_connection = base_url + ('?' + parts[1] if len(parts) > 1 else '')
+        
+        connection_string = f"{base_connection}/demai"
         if not connection_string:
             raise ValueError("MONGO_CONNECTION environment variable not set")
         

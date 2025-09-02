@@ -1,0 +1,9 @@
+{
+  "name": "",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "codex": "codex -m gpt-5 -c model_reasoning_effort=\"high\" --ask-for-approval never --sandbox danger-full-access",
+    "claude": "ENABLE_BACKGROUND_TASKS=1 claude --dangerously-skip-permissions"
+  }
+}

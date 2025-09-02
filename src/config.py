@@ -121,6 +121,11 @@ CHAIN_CONFIG = {
         "name": "Core",
         "rpc_url": os.getenv("CORE_RPC_URL", "https://rpc.coredao.org"),
         "native_currency": {"symbol": "CORE", "name": "Core", "decimals": 18, "coingeckoId": "core"}
+    },
+    747474: {
+        "name": "Katana",
+        "rpc_url": os.getenv("KATANA_RPC_URL", "https://rpc.katana.network"),
+        "native_currency": {"symbol": "ETH", "name": "Ethereum", "decimals": 18, "coingeckoId": "ethereum"}
     }
 }
 

@@ -22,7 +22,7 @@ load_dotenv()
 class SimpleAssistant:
     """Simple chat assistant with portfolio capabilities and session management."""
     
-    def __init__(self, vault_address: str, model: str = "google/gemini-2.5-pro"):
+    def __init__(self, vault_address: str, model: str = "openai/gpt-oss-120b"):
         """Initialize the assistant with a vault address."""
         self.vault_address = vault_address
         self.model = model

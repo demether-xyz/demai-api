@@ -213,7 +213,7 @@ class LangChainToolsAgent:
 
 
 async def create_tools_agent(
-    tools: List[StructuredTool], model_id: str = "google/gemini-2.0-flash-thinking-exp", verbose: bool = False
+    tools: List[StructuredTool], model_id: str = "openai/gpt-oss-120b", verbose: bool = False
 ) -> LangChainToolsAgent:
     """
     Factory function to create a configured tools agent.
