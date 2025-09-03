@@ -9,6 +9,7 @@ from tools.portfolio_tool import create_portfolio_tool
 from tools.research_tool import create_research_tool
 from tools.aave_tool import create_aave_tool
 from tools.akka_tool import create_swap_tool
+from tools.sushi_tool import create_sushi_tool
 from config import logger
 
 
@@ -34,6 +35,13 @@ class AaveLendingInput(BaseModel):
 class AkkaSwapInput(BaseModel):
     chain_name: str = Field(description="The blockchain network - currently only 'Core' is supported")
     src_token: str = Field(description="The source token symbol to swap from (e.g., 'USDC', 'USDT')")
+    dst_token: str = Field(description="The destination token symbol to swap to")
+    amount: float = Field(description="The amount of source token to swap")
+
+
+class SushiSwapInput(BaseModel):
+    chain_name: str = Field(description="The blockchain network - currently only 'Katana' is supported")
+    src_token: str = Field(description="The source token symbol to swap from")
     dst_token: str = Field(description="The destination token symbol to swap to")
     amount: float = Field(description="The amount of source token to swap")
 
@@ -93,6 +101,17 @@ def create_defi_langchain_tools(vault_address: str, include_portfolio: bool = Tr
         name="akka_swap",
         description="Swap tokens using Akka Finance DEX aggregator on Core chain. Use this tool when the user wants to swap, exchange, convert, or trade one token for another.",
         args_schema=AkkaSwapInput
+    ))
+    
+    # Sushi swap tool (Katana)
+    sushi_config = create_sushi_tool(vault_address=vault_address)
+    sushi_func = sushi_config["tool"]
+    
+    tools.append(create_langchain_tool(
+        func=sushi_func,
+        name="sushi_swap",
+        description="Swap tokens using Sushi router on Katana. Use for swaps, exchanges, or trades on Katana.",
+        args_schema=SushiSwapInput
     ))
     
     logger.info(f"Created {len(tools)} DeFi tools for vault {vault_address}")

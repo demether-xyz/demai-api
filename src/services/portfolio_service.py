@@ -25,8 +25,7 @@ class PortfolioService:
         self.web3_instances = {}
         self.Web3 = None
         
-        # In-memory cache for portfolio data
-        self._memory_cache = {}
+        # Removed in-memory cache - using only database cache
         
         self._import_web3()
         self._initialize_web3_connections()
@@ -107,8 +106,6 @@ class PortfolioService:
     
     async def get_cache_stats(self) -> Dict[str, Any]:
         """Get cache statistics"""
-        memory_cache_size = len(self._memory_cache)
-        
         db_cache_size = 0
         if self.db is not None:
             try:
@@ -118,7 +115,7 @@ class PortfolioService:
                 logger.error(f"Error getting database cache size: {e}")
         
         return {
-            "memory_cache_entries": memory_cache_size,
+            "memory_cache_entries": 0,  # Memory cache disabled
             "database_cache_entries": db_cache_size,
             "cache_ttl_seconds": self.cache_ttl.total_seconds(),
             "web3_connections": len(self.web3_instances),
@@ -126,15 +123,7 @@ class PortfolioService:
         }
     
     async def clear_portfolio_cache(self, vault_address: Optional[str] = None):
-        """Clear all caches (memory and DB) for a specific vault or all vaults."""
-        # Clear memory cache
-        if vault_address:
-            if vault_address in self._memory_cache:
-                del self._memory_cache[vault_address]
-                logger.info(f"Cleared memory cache for vault {vault_address}")
-        else:
-            self._memory_cache.clear()
-            logger.info("Cleared all memory cache")
+        """Clear database cache - memory cache disabled."""
 
         # Clear database cache
         if self.db is not None:
@@ -150,14 +139,8 @@ class PortfolioService:
                 logger.error(f"Error clearing database cache: {e}")
     
     def clear_memory_cache(self, vault_address: Optional[str] = None):
-        """Clear memory cache for a specific vault or all vaults"""
-        if vault_address:
-            if vault_address in self._memory_cache:
-                del self._memory_cache[vault_address]
-                logger.info(f"Cleared memory cache for vault {vault_address}")
-        else:
-            self._memory_cache.clear()
-            logger.info("Cleared all memory cache")
+        """Memory cache disabled - only database cache used"""
+        logger.info("Memory cache disabled - using only database cache")
     
     async def _ensure_database_indexes(self):
         """Ensure database indexes exist for optimal performance"""
@@ -359,13 +342,19 @@ class PortfolioService:
             }
             
         # Check cache only if refresh is not requested
+        logger.info(f"Cache check: refresh={refresh} for {target_address}")
         if not refresh:
+            logger.info(f"Checking cache for {target_address}")
             cached_data = await self._get_from_cache(target_address)
             if cached_data:
                 logger.info(f"Returning cached portfolio for {target_address}")
                 return cached_data
+            else:
+                logger.info(f"No cached data found for {target_address}")
         else:
             logger.info(f"Refresh requested, bypassing cache for {target_address}")
+            # Clear any existing cache when refresh is requested
+            await self.clear_portfolio_cache(target_address)
 
         try:
             # Use optimized batch balance query - one call per chain
@@ -431,20 +420,8 @@ class PortfolioService:
             }
 
     async def _get_from_cache(self, vault_address: str) -> Optional[Dict[str, Any]]:
-        """Check memory cache first, then database cache for fresh data."""
-        # Step 1: Check memory cache
-        if vault_address in self._memory_cache:
-            cached_entry = self._memory_cache[vault_address]
-            is_stale = datetime.datetime.now(timezone.utc) - cached_entry['timestamp'] > self.cache_ttl
-            if not is_stale:
-                logger.info(f"Returning in-memory cached portfolio for address {vault_address}")
-                return cached_entry['data']
-            else:
-                # Remove stale memory cache
-                del self._memory_cache[vault_address]
-                logger.info(f"Removed stale memory cache for address {vault_address}")
-        
-        # Step 2: Check database cache
+        """Check database cache for fresh data - memory cache disabled."""
+        # Check database cache only
         if self.db is not None:
             try:
                 cache_collection = self.db.portfolio_cache
@@ -459,12 +436,8 @@ class PortfolioService:
                     
                     if not is_db_stale:
                         logger.info(f"Returning database cached portfolio for address {vault_address}")
-                        # Also put back in memory cache for faster future access
+                        # Return data directly - no memory cache
                         portfolio_data = result["data"]
-                        self._memory_cache[vault_address] = {
-                            'data': portfolio_data,
-                            'timestamp': cached_timestamp
-                        }
                         return portfolio_data
                     else:
                         # Remove stale database cache
@@ -477,17 +450,10 @@ class PortfolioService:
         return None
 
     async def _put_in_cache(self, vault_address: str, portfolio_data: Dict[str, Any]):
-        """Put data into both memory and database cache."""
+        """Put data into database cache only - memory cache disabled."""
         timestamp = datetime.datetime.now(timezone.utc)
         
-        # Put in memory cache
-        self._memory_cache[vault_address] = {
-            'data': portfolio_data,
-            'timestamp': timestamp
-        }
-        logger.info(f"Cached portfolio in memory for address {vault_address}")
-        
-        # Put in database cache
+        # Put in database cache only
         if self.db is not None:
             try:
                 cache_collection = self.db.portfolio_cache
@@ -624,7 +590,9 @@ class PortfolioService:
         tokens_by_chain = {}
         skipped_chains = set()
         
+        logger.info(f"Processing {len(SUPPORTED_TOKENS)} supported tokens...")
         for token_symbol, token_config in SUPPORTED_TOKENS.items():
+            logger.info(f"Processing token {token_symbol}: {token_config}")
             for chain_id, token_address in token_config["addresses"].items():
                 if chain_id not in self.web3_instances:
                     # Track skipped chains but don't log warnings yet (connections might still be initializing)
@@ -643,14 +611,53 @@ class PortfolioService:
                 
                 # Also add aTokens if they exist for this token/chain combination
                 if "aave_atokens" in token_config and chain_id in token_config["aave_atokens"]:
-                    atoken_address = token_config["aave_atokens"][chain_id]
-                    tokens_by_chain[chain_id].append({
-                        "address": atoken_address,
-                        "config": token_config,
-                        "symbol": f"a{token_symbol}",  # Prefix with 'a' to indicate aToken
-                        "is_atoken": True,
-                        "underlying_symbol": token_symbol
-                    })
+                    atoken_config = token_config["aave_atokens"][chain_id]
+                    
+                    # Handle both single aToken (string/dict) and multiple aTokens (list)
+                    if isinstance(atoken_config, list):
+                        # Multiple aTokens (new array format)
+                        atoken_list = atoken_config
+                    elif isinstance(atoken_config, str):
+                        # Legacy single aToken (string address)
+                        atoken_list = [{"address": atoken_config, "name": None, "decimals": None}]
+                    else:
+                        # Single aToken (dict format)
+                        atoken_list = [atoken_config]
+                    
+                    for atoken_data in atoken_list:
+                        atoken_address = atoken_data.get("address") or atoken_data
+                        logger.info(f"Found aToken for {token_symbol} on chain {chain_id}: {atoken_address}")
+                        logger.info(f"aToken data: {atoken_data}")
+                        
+                        # Determine protocol based on chain - Katana uses Morpho, others use Aave
+                        if chain_id == 747474:  # Katana
+                            protocol_name = "Morpho"
+                            strategy_name = "morpho_v1"
+                            # Use proper aToken name from config or fallback
+                            if isinstance(atoken_data, dict) and atoken_data.get("name"):
+                                atoken_symbol = atoken_data["name"]
+                            else:
+                                atoken_symbol = f"Steakhouse High Yield {token_symbol}"
+                            # Get decimals from config or fallback to 18
+                            atoken_decimals = atoken_data.get("decimals", 18) if isinstance(atoken_data, dict) else 18
+                        else:
+                            protocol_name = "Aave V3"
+                            strategy_name = "aave_v3"
+                            atoken_symbol = f"a{token_symbol}"
+                            atoken_decimals = atoken_data.get("decimals", token_config.get("decimals", 18)) if isinstance(atoken_data, dict) else token_config.get("decimals", 18)
+                        
+                        atoken_info = {
+                            "address": atoken_address,
+                            "config": token_config,
+                            "symbol": atoken_symbol,
+                            "is_atoken": True,
+                            "underlying_symbol": token_symbol,
+                            "protocol": protocol_name,
+                            "strategy": strategy_name,
+                            "atoken_decimals": atoken_decimals
+                        }
+                        logger.info(f"Adding aToken to processing queue: {atoken_info}")
+                        tokens_by_chain[chain_id].append(atoken_info)
         
         # Log skipped chains only once (not per token)
         if skipped_chains:
@@ -707,26 +714,51 @@ class PortfolioService:
                     token_info = token_list[j]
                     
                     # Convert balance to human readable format
-                    decimals = token_info["config"].get("decimals", 18)
+                    # Use aToken-specific decimals if available, otherwise use underlying token decimals
+                    if token_info.get("is_atoken"):
+                        if "atoken_decimals" in token_info:
+                            # Use decimals from atoken_info (new format)
+                            decimals = token_info["atoken_decimals"]
+                        elif "atoken_decimals" in token_info["config"]:
+                            # Legacy format: decimals in config
+                            decimals = token_info["config"]["atoken_decimals"].get(chain_id, 18)
+                        else:
+                            decimals = 18  # Default for aTokens
+                        logger.info(f"Using aToken decimals {decimals} for {token_info['symbol']} on chain {chain_id}")
+                    else:
+                        decimals = token_info["config"].get("decimals", 18)
+                    
+                    # Ensure decimals is not None
+                    if decimals is None:
+                        logger.warning(f"Decimals is None for {token_info['symbol']}, defaulting to 18")
+                        decimals = 18
+                    
                     balance = float(balance_wei) / (10 ** decimals)
+                    
+                    # Log balance for aTokens
+                    if token_info.get("is_atoken"):
+                        logger.info(f"aToken balance check: {token_info['symbol']} = {balance} (address: {token_info['address']})")
                     
                     # Skip zero balances for aTokens to reduce clutter
                     if token_info.get("is_atoken") and balance == 0:
+                        logger.info(f"Skipping zero balance aToken: {token_info['symbol']}")
                         continue
                     
                     if token_info.get("is_atoken"):
-                        # Handle aToken balance entry
+                        # Handle aToken/yield token balance entry (Aave, Morpho, etc.)
                         balance_entry = {
-                            "token_symbol": token_info["underlying_symbol"],  # Use underlying token symbol
+                            "token_symbol": token_info["symbol"],  # Use full aToken name (e.g., "Steakhouse High Yield AUSD")
+                            "underlying_symbol": token_info["underlying_symbol"],  # Keep underlying for reference
                             "chain_id": chain_id,
-                            "protocol": "Aave V3",
-                            "strategy": "aave_v3",
+                            "protocol": token_info.get("protocol", "Aave V3"),
+                            "strategy": token_info.get("strategy", "aave_v3"),
                             "balance": balance,
                             "decimals": decimals,
                             "atoken_address": token_info["address"],
                             "coingeckoId": token_info["config"].get("coingeckoId"),  # Use underlying token's coingecko ID
                             "type": "strategy"  # Mark as strategy holding
                         }
+                        logger.info(f"Processing aToken balance: {balance_entry}")
                     else:
                         # Regular token balance entry
                         balance_entry = {
@@ -736,6 +768,7 @@ class PortfolioService:
                             "balance": balance,
                             "coingeckoId": token_info["config"].get("coingeckoId")
                         }
+                        logger.info(f"Processing regular token balance: {balance_entry}")
                         
                         if token_info.get("is_native"):
                             balance_entry["is_native"] = True
@@ -788,12 +821,25 @@ class PortfolioService:
                         # Also add aTokens if they exist
                         if "aave_atokens" in token_config and chain_id in token_config["aave_atokens"]:
                             atoken_address = token_config["aave_atokens"][chain_id]
+                            
+                            # Determine protocol based on chain
+                            if chain_id == 747474:  # Katana
+                                protocol_name = "Morpho"
+                                strategy_name = "morpho_v1"
+                                symbol_prefix = "steak"
+                            else:
+                                protocol_name = "Aave V3"
+                                strategy_name = "aave_v3"
+                                symbol_prefix = "a"
+                            
                             chain_tokens.append({
                                 "address": atoken_address,
                                 "config": token_config,
-                                "symbol": f"a{token_symbol}",
+                                "symbol": f"{symbol_prefix}{token_symbol}",
                                 "is_atoken": True,
-                                "underlying_symbol": token_symbol
+                                "underlying_symbol": token_symbol,
+                                "protocol": protocol_name,
+                                "strategy": strategy_name
                             })
                 
                 # Add native token
@@ -812,7 +858,22 @@ class PortfolioService:
                         if result and len(result) == len(chain_tokens):
                             for j, balance_wei in enumerate(result):
                                 token_info = chain_tokens[j]
-                                decimals = token_info["config"].get("decimals", 18)
+                                # Use aToken-specific decimals if available
+                                if token_info.get("is_atoken"):
+                                    if "atoken_decimals" in token_info:
+                                        decimals = token_info["atoken_decimals"]
+                                    elif "atoken_decimals" in token_info["config"]:
+                                        decimals = token_info["config"]["atoken_decimals"].get(chain_id, 18)
+                                    else:
+                                        decimals = 18
+                                else:
+                                    decimals = token_info["config"].get("decimals", 18)
+                                
+                                # Ensure decimals is not None
+                                if decimals is None:
+                                    logger.warning(f"Decimals is None for {token_info['symbol']}, defaulting to 18")
+                                    decimals = 18
+                                    
                                 balance = float(balance_wei) / (10 ** decimals)
                                 
                                 # Skip zero balances for aTokens
@@ -823,8 +884,8 @@ class PortfolioService:
                                     balance_entry = {
                                         "token_symbol": token_info["underlying_symbol"],
                                         "chain_id": chain_id,
-                                        "protocol": "Aave V3",
-                                        "strategy": "aave_v3",
+                                        "protocol": token_info.get("protocol", "Aave V3"),
+                                        "strategy": token_info.get("strategy", "aave_v3"),
                                         "balance": balance,
                                         "decimals": decimals,
                                         "atoken_address": token_info["address"],
@@ -900,7 +961,22 @@ class PortfolioService:
                         abi=ERC20_ABI
                     )
                     balance_wei = contract.functions.balanceOf(vault_address).call()
-                    decimals = token_info["config"]["decimals"]
+                    # Use aToken-specific decimals if available
+                    if token_info.get("is_atoken"):
+                        if "atoken_decimals" in token_info:
+                            decimals = token_info["atoken_decimals"]
+                        elif "atoken_decimals" in token_info["config"]:
+                            decimals = token_info["config"]["atoken_decimals"].get(chain_id, 18)
+                        else:
+                            decimals = 18
+                    else:
+                        decimals = token_info["config"].get("decimals", 18)
+                    
+                    # Ensure decimals is not None
+                    if decimals is None:
+                        logger.warning(f"Decimals is None for {token_info['symbol']}, defaulting to 18")
+                        decimals = 18
+                        
                     balance = float(balance_wei) / (10 ** decimals)
                 
                 if balance is not None:
@@ -909,12 +985,12 @@ class PortfolioService:
                         continue
                         
                     if token_info.get("is_atoken"):
-                        # Handle aToken balance entry
+                        # Handle aToken/yield token balance entry (Aave, Morpho, etc.)
                         balance_entry = {
                             "token_symbol": token_info["underlying_symbol"],
                             "chain_id": chain_id,
-                            "protocol": "Aave V3",
-                            "strategy": "aave_v3",
+                            "protocol": token_info.get("protocol", "Aave V3"),
+                            "strategy": token_info.get("strategy", "aave_v3"),
                             "balance": balance,
                             "decimals": token_info["config"]["decimals"],
                             "atoken_address": token_info["address"],

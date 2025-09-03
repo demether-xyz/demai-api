@@ -34,7 +34,20 @@
       "Bash(/opt/homebrew/bin/python3 -m poetry install:*)",
       "Bash(/opt/homebrew/bin/python3 -m pytest src/test/test_llm_portfolio_tool.py -v)",
       "Bash(/opt/homebrew/bin/python3:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "WebFetch(domain:docs.morpho.org)",
+      "WebFetch(domain:app.morpho.org)",
+      "Read(/Users/jdorado/dev/demether/demai-contracts/src/**)",
+      "Read(/Users/jdorado/dev/demether/demai-app/src/config/**)",
+      "Read(/Users/jdorado/dev/demether/demai-app/src/**)",
+      "Read(/Users/jdorado/dev/demether/demai-app/src/components/**)",
+      "Read(/Users/jdorado/dev/demether/demai-app/src/hooks/**)",
+      "Read(/Users/jdorado/dev/demether/demai-app/src/services/**)",
+      "Read(/Users/jdorado/dev/demether/demai-app/src/services/**)",
+      "Read(/Users/jdorado/dev/demether/demai-app/src/services/**)",
+      "Read(/Users/jdorado/dev/demether/demai-app/docs/**)",
+      "Read(/Users/jdorado/dev/demether/demai-app/docs/**)",
+      "Read(/Users/jdorado/dev/demether/demai-app/docs/**)"
     ],
     "deny": []
   }

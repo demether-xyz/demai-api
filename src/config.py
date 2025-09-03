@@ -108,6 +108,29 @@ SUPPORTED_TOKENS = {
         },
         "coingeckoId": "tether",
     },
+    "AUSD": {
+        "symbol": "AUSD",
+        "name": "AUSD Stablecoin",
+        "decimals": 6,
+        "addresses": {
+            747474: "0x00000000eFE302BEAA2b3e6e1b18d08D69a9012a",  # Katana
+        },
+        "aave_atokens": {
+            747474: [
+                {
+                    "address": "0x82c4C641CCc38719ae1f0FBd16A64808d838fDfD",
+                    "name": "Steakhouse High Yield AUSD",
+                    "decimals": 18
+                },
+                {
+                    "address": "0x9540441C503D763094921dbE4f13268E6d1d3B56",
+                    "name": "Gauntlet AUSD", 
+                    "decimals": 18
+                }
+            ]
+        },
+        "coingeckoId": "agora-dollar"
+    },
 }
 
 # Chain configuration

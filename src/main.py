@@ -245,7 +245,8 @@ async def portfolio_endpoint(request: PortfolioRequest):
         # Get portfolio summary - pass both vault and wallet address (both properly checksummed)
         portfolio_data = await portfolio_service.get_portfolio_summary(
             vault_address=checksummed_vault_address,
-            wallet_address=checksummed_wallet_address
+            wallet_address=checksummed_wallet_address,
+            refresh=request.refresh
         )
         
         return portfolio_data
