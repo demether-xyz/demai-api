@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 # --- Test Configuration ---
 TEST_VAULT_ADDRESS = "0x25bA533C8BD1a00b1FA4cD807054d03e168dff92"
-TEST_MODEL_ID = "google/gemini-2.5-pro"
+TEST_MODEL_ID = "openai/gpt-oss-120b"
 VERBOSE = True 
 
 # --- End Test Configuration ---

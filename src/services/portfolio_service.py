@@ -820,27 +820,45 @@ class PortfolioService:
                         
                         # Also add aTokens if they exist
                         if "aave_atokens" in token_config and chain_id in token_config["aave_atokens"]:
-                            atoken_address = token_config["aave_atokens"][chain_id]
+                            atoken_config = token_config["aave_atokens"][chain_id]
                             
-                            # Determine protocol based on chain
-                            if chain_id == 747474:  # Katana
-                                protocol_name = "Morpho"
-                                strategy_name = "morpho_v1"
-                                symbol_prefix = "steak"
+                            # Handle both single aToken (string/dict) and multiple aTokens (list)
+                            if isinstance(atoken_config, list):
+                                # Multiple aTokens (new array format)
+                                atoken_list = atoken_config
+                            elif isinstance(atoken_config, str):
+                                # Legacy single aToken (string address)
+                                atoken_list = [{"address": atoken_config, "name": None, "decimals": None}]
                             else:
-                                protocol_name = "Aave V3"
-                                strategy_name = "aave_v3"
-                                symbol_prefix = "a"
+                                # Single aToken (dict format)
+                                atoken_list = [atoken_config]
                             
-                            chain_tokens.append({
-                                "address": atoken_address,
-                                "config": token_config,
-                                "symbol": f"{symbol_prefix}{token_symbol}",
-                                "is_atoken": True,
-                                "underlying_symbol": token_symbol,
-                                "protocol": protocol_name,
-                                "strategy": strategy_name
-                            })
+                            # Process each aToken
+                            for atoken_data in atoken_list:
+                                atoken_address = atoken_data.get("address") if isinstance(atoken_data, dict) else atoken_data
+                                
+                                # Determine protocol based on chain
+                                if chain_id == 747474:  # Katana
+                                    protocol_name = "Morpho"
+                                    strategy_name = "morpho_v1"
+                                    if isinstance(atoken_data, dict) and atoken_data.get("name"):
+                                        atoken_symbol = atoken_data["name"]
+                                    else:
+                                        atoken_symbol = f"Steakhouse High Yield {token_symbol}"
+                                else:
+                                    protocol_name = "Aave V3"
+                                    strategy_name = "aave_v3"
+                                    atoken_symbol = f"a{token_symbol}"
+                                
+                                chain_tokens.append({
+                                    "address": atoken_address,
+                                    "config": token_config,
+                                    "symbol": atoken_symbol,
+                                    "is_atoken": True,
+                                    "underlying_symbol": token_symbol,
+                                    "protocol": protocol_name,
+                                    "strategy": strategy_name
+                                })
                 
                 # Add native token
                 if chain_id in NATIVE_CURRENCIES:

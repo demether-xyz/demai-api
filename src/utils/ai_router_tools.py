@@ -32,7 +32,7 @@ class LangChainToolsAgent:
     def __init__(
         self,
         tools: List[StructuredTool],
-        model_id: str = "google/gemini-2.0-flash-thinking-exp",
+        model_id: str = "openai/gpt-oss-120b",
         temperature: float = 0.0,
         max_iterations: int = 15,
         verbose: bool = False,

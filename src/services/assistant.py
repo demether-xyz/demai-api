@@ -320,7 +320,7 @@ class SimpleAssistant:
 
 
 # Convenience function for quick setup
-async def create_assistant(vault_address: str, model: str = "google/gemini-2.5-pro") -> SimpleAssistant:
+async def create_assistant(vault_address: str, model: str = "openai/gpt-oss-120b") -> SimpleAssistant:
     """Create a simple assistant instance."""
     return SimpleAssistant(vault_address, model)
 

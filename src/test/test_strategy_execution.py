@@ -26,7 +26,7 @@ async def main():
     result = await execute_defi_strategy(
         task=task,
         vault_address=vault_address,
-        model="google/gemini-2.5-pro"
+        model="openai/gpt-oss-120b"
     )
     
     # Print results

@@ -22,7 +22,7 @@ load_dotenv()
 class StrategyExecutor:
     """Execute one-time strategy tasks using LLM and tools."""
     
-    def __init__(self, vault_address: str, model: str = "google/gemini-2.5-pro"):
+    def __init__(self, vault_address: str, model: str = "openai/gpt-oss-120b"):
         """Initialize the executor with a vault address."""
         self.vault_address = vault_address
         self.model = model
@@ -236,7 +236,7 @@ class StrategyExecutor:
 
 
 # Convenience function for strategy execution
-async def execute_defi_strategy(task: str, vault_address: str, model: str = "google/gemini-2.5-pro") -> Dict[str, Any]:
+async def execute_defi_strategy(task: str, vault_address: str, model: str = "openai/gpt-oss-120b") -> Dict[str, Any]:
     """Execute a DeFi strategy task.
     
     Args:

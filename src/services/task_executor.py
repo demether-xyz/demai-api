@@ -88,7 +88,7 @@ class TaskExecutor:
             result = await execute_defi_strategy(
                 task=formatted_task,
                 vault_address=task["vault_address"],
-                model="google/gemini-2.5-pro"  # Fast model for scheduled tasks
+                model="openai/gpt-oss-120b"  # Fast model for scheduled tasks
             )
             
             # Extract memo and status from result
@@ -183,7 +183,7 @@ class TaskExecutor:
             result = await execute_defi_strategy(
                 task=formatted_task,
                 vault_address=task["vault_address"],
-                model="google/gemini-2.5-pro"  # Fast model for scheduled tasks
+                model="openai/gpt-oss-120b"  # Fast model for scheduled tasks
             )
             
             # Extract memo and status from result
