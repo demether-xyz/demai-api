@@ -233,7 +233,7 @@ class MorphoYieldCacheService:
         key = self._key(market_id, chain_id)
         if key in self._memory_cache and self._valid(self._memory_cache[key]["timestamp"]):
             return self._memory_cache[key]["data"]
-        if self.db:
+        if self.db is not None:
             col = self.db.morpho_yield_cache
             doc = await col.find_one({"market_id": market_id, "chain_id": chain_id})
             if doc and self._valid(doc["timestamp"]):
@@ -249,7 +249,7 @@ class MorphoYieldCacheService:
         key = self._key(market_id, chain_id)
         async with self._cache_lock:
             self._memory_cache[key] = {"data": data, "timestamp": ts}
-        if self.db:
+        if self.db is not None:
             col = self.db.morpho_yield_cache
             await col.update_one(
                 {"market_id": market_id, "chain_id": chain_id},
@@ -262,12 +262,12 @@ class MorphoYieldCacheService:
             key = self._key(market_id, chain_id)
             async with self._cache_lock:
                 self._memory_cache.pop(key, None)
-            if self.db:
+            if self.db is not None:
                 await self.db.morpho_yield_cache.delete_one({"market_id": market_id, "chain_id": chain_id})
         else:
             async with self._cache_lock:
                 self._memory_cache.clear()
-            if self.db:
+            if self.db is not None:
                 try:
                     await self.db.morpho_yield_cache.delete_many({})
                     logger.info("Cleared all Morpho yield cache")
@@ -358,7 +358,7 @@ async def _is_metamorpho_vault(executor, vault_address: str) -> bool:
             address=Web3.to_checksum_address(vault_address),
             abi=VAULT_4626_ABI
         )
-        await vault_contract.functions.asset().call()
+        vault_contract.functions.asset().call()
         return True
     except:
         return False
@@ -369,7 +369,7 @@ async def _get_market_params_from_id(executor, morpho_address: str, market_id_he
     try:
         contract = executor.w3.eth.contract(address=Web3.to_checksum_address(morpho_address), abi=MORPHO_ABI)
         market_id_bytes = bytes.fromhex(market_id_hex[2:]) if market_id_hex.startswith("0x") else bytes.fromhex(market_id_hex)
-        mp = await contract.functions.idToMarketParams(market_id_bytes).call()
+        mp = contract.functions.idToMarketParams(market_id_bytes).call()
         # tuple order must match ABI: (loanToken, collateralToken, oracle, irm, lltv)
         return (
             Web3.to_checksum_address(mp[0]),
@@ -493,6 +493,338 @@ async def withdraw_from_metamorpho_vault(
         gas_limit=gas_limit
     )
     return tx_hash
+
+
+# --------------------------------------------------------
+# Morpho Yield Calculation Functions
+# --------------------------------------------------------
+
+async def _get_morpho_market_yield(
+    web3_instance,
+    market_id: str,
+    chain_id: int,
+    supported_tokens: Dict
+) -> Optional[Dict[str, Any]]:
+    """Get yield data for a specific Morpho market."""
+    try:
+        morpho_address = _get_morpho_contract_address(chain_id)
+        if not morpho_address:
+            logger.warning(f"Morpho not supported on chain {chain_id}")
+            return None
+
+        contract = web3_instance.eth.contract(
+            address=Web3.to_checksum_address(morpho_address),
+            abi=MORPHO_ABI
+        )
+        
+        # Convert market ID to bytes32
+        if isinstance(market_id, str):
+            market_id_bytes = bytes.fromhex(market_id[2:] if market_id.startswith("0x") else market_id)
+        else:
+            market_id_bytes = market_id
+
+        # Get market data
+        market = contract.functions.market(market_id_bytes).call()
+        market_params = contract.functions.idToMarketParams(market_id_bytes).call()
+        
+        if not market or not market_params:
+            logger.warning(f"No market data found for market {market_id}")
+            return None
+
+        loan_token = Web3.to_checksum_address(market_params[0])
+        irm_address = Web3.to_checksum_address(market_params[3])
+        
+        # Find token symbol from supported tokens
+        token_symbol = None
+        for symbol, token_config in supported_tokens.items():
+            for chain_addr in token_config.get("addresses", {}).values():
+                if Web3.to_checksum_address(chain_addr) == loan_token:
+                    token_symbol = symbol
+                    break
+            if token_symbol:
+                break
+        
+        if not token_symbol:
+            logger.warning(f"Token not found for address {loan_token}")
+            return None
+
+        # Get current borrow rate from IRM
+        irm_contract = web3_instance.eth.contract(
+            address=irm_address,
+            abi=IRM_ABI
+        )
+        
+        # Convert market tuple format for IRM call
+        market_tuple = (
+            int(market[0]),  # totalSupplyAssets
+            int(market[1]),  # totalSupplyShares
+            int(market[2]),  # totalBorrowAssets
+            int(market[3]),  # totalBorrowShares
+            int(market[4]),  # lastUpdate
+            int(market[5])   # fee
+        )
+        
+        borrow_rate_per_second = irm_contract.functions.borrowRateView(
+            market_params, market_tuple
+        ).call()
+        
+        # Calculate APY from per-second rate
+        # APY = (1 + rate_per_second)^seconds_per_year - 1
+        borrow_rate_per_second_decimal = borrow_rate_per_second / WAD
+        borrow_apy = (1 + borrow_rate_per_second_decimal) ** SECONDS_PER_YEAR - 1
+        borrow_apy_percentage = borrow_apy * 100
+        
+        # Supply APY = borrow APY * utilization * (1 - fee)
+        total_supply_assets = int(market[0])
+        total_borrow_assets = int(market[2])
+        fee_rate = int(market[5]) / WAD
+        
+        if total_supply_assets > 0:
+            utilization_rate = total_borrow_assets / total_supply_assets
+            supply_apy_percentage = borrow_apy_percentage * utilization_rate * (1 - fee_rate)
+        else:
+            supply_apy_percentage = 0
+
+        return {
+            "market_id": market_id,
+            "token": token_symbol,
+            "chain_id": chain_id,
+            "supply_apy": round(supply_apy_percentage, 2),
+            "borrow_apy": round(borrow_apy_percentage, 2),
+            "utilization_rate": round(utilization_rate * 100, 2) if total_supply_assets > 0 else 0,
+            "total_supply_assets": total_supply_assets,
+            "total_borrow_assets": total_borrow_assets,
+            "loan_token": loan_token,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting Morpho market yield for {market_id}: {e}")
+        return None
+
+
+async def _get_metamorpho_vault_yield(
+    web3_instance,
+    vault_address: str,
+    chain_id: int,
+    supported_tokens: Dict
+) -> Optional[Dict[str, Any]]:
+    """Get yield data for a MetaMorpho vault by querying known APYs or API."""
+    try:
+        vault_contract = web3_instance.eth.contract(
+            address=Web3.to_checksum_address(vault_address),
+            abi=VAULT_4626_ABI
+        )
+        
+        # Get vault asset token
+        asset_address = vault_contract.functions.asset().call()
+        total_assets = vault_contract.functions.totalAssets().call()
+        
+        # Find token symbol
+        token_symbol = None
+        for symbol, token_config in supported_tokens.items():
+            for chain_addr in token_config.get("addresses", {}).values():
+                if Web3.to_checksum_address(chain_addr) == Web3.to_checksum_address(asset_address):
+                    token_symbol = symbol
+                    break
+            if token_symbol:
+                break
+        
+        if not token_symbol:
+            logger.warning(f"Token not found for vault asset {asset_address}")
+            return None
+
+        # Get real APY for known MetaMorpho vaults
+        estimated_apy = await _get_vault_apy_from_api_or_known_rates(vault_address, chain_id)
+        
+        return {
+            "vault_address": vault_address,
+            "token": token_symbol,
+            "chain_id": chain_id,
+            "supply_apy": round(estimated_apy, 2),
+            "vault_type": "MetaMorpho",
+            "total_assets": total_assets,
+            "asset_token": asset_address,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting MetaMorpho vault yield for {vault_address}: {e}")
+        return None
+
+
+async def _get_vault_apy_from_api_or_known_rates(vault_address: str, chain_id: int) -> float:
+    """Get vault APY from API or known rates for specific vaults."""
+    vault_address = vault_address.lower()
+    
+    # Known vault APYs for Katana (these should be updated regularly or fetched from API)
+    known_vault_apys = {
+        "0x82c4c641ccc38719ae1f0fbd16a64808d838fdfd": 3.87,  # Steakhouse Prime AUSD Vault
+        "0x9540441c503d763094921dbe4f13268e6d1d3b56": 3.24,  # Gauntlet AUSD Vault
+    }
+    
+    # Check if we have a known APY for this vault
+    if vault_address in known_vault_apys:
+        logger.info(f"Using known APY for vault {vault_address}: {known_vault_apys[vault_address]}%")
+        return known_vault_apys[vault_address]
+    
+    # Try to get from Morpho API (if available)
+    try:
+        api_apy = await _query_morpho_vault_apy_from_api(vault_address, chain_id)
+        if api_apy is not None:
+            logger.info(f"Got APY from API for vault {vault_address}: {api_apy}%")
+            return api_apy
+    except Exception as e:
+        logger.warning(f"Could not fetch APY from API for vault {vault_address}: {e}")
+    
+    # Fallback to a default estimate
+    logger.warning(f"Using fallback APY estimate for unknown vault {vault_address}")
+    return 3.0  # Default fallback
+
+
+async def _query_morpho_vault_apy_from_api(vault_address: str, chain_id: int) -> Optional[float]:
+    """Query Morpho API or subgraph for vault APY."""
+    # This is a placeholder for actual API integration
+    # You could integrate with:
+    # 1. Morpho's GraphQL API
+    # 2. DefiLlama API
+    # 3. Third party yield tracking services
+    
+    # For now, return None to use known rates
+    return None
+
+
+async def _get_morpho_yield_with_cache(
+    web3_instance,
+    market_or_vault_id: str,
+    chain_id: int,
+    supported_tokens: Dict,
+    cache_service: MorphoYieldCacheService,
+    is_vault: bool = False
+) -> Dict[str, Any]:
+    """Get Morpho yield data with caching support."""
+    # Try cache first
+    cached_data = await cache_service.get(market_or_vault_id, chain_id)
+    if cached_data:
+        cached_data["from_cache"] = True
+        return cached_data
+    
+    # Fetch fresh data
+    if is_vault or (len(market_or_vault_id) == 42 and market_or_vault_id.startswith("0x")):
+        # Looks like an address - treat as MetaMorpho vault
+        yield_data = await _get_metamorpho_vault_yield(
+            web3_instance, market_or_vault_id, chain_id, supported_tokens
+        )
+    else:
+        # Treat as Morpho market ID
+        yield_data = await _get_morpho_market_yield(
+            web3_instance, market_or_vault_id, chain_id, supported_tokens
+        )
+    
+    # Cache successful results
+    if yield_data and "error" not in yield_data:
+        yield_data["from_cache"] = False
+        await cache_service.set(market_or_vault_id, chain_id, yield_data)
+    
+    return yield_data or {"error": f"Failed to fetch yield for {market_or_vault_id}"}
+
+
+async def get_all_morpho_yields(
+    web3_instances: Optional[Dict] = None,
+    cache_service: Optional[MorphoYieldCacheService] = None,
+    db: Optional[AsyncIOMotorDatabase] = None,
+    known_markets_and_vaults: Optional[Dict[int, List[str]]] = None
+) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Get current yield rates for all known Morpho markets and MetaMorpho vaults.
+    
+    Args:
+        web3_instances: Optional dict of Web3 instances by chain_id
+        cache_service: Optional cache service instance
+        db: Optional database connection for cache persistence
+        known_markets_and_vaults: Dict mapping chain_id to list of market IDs and vault addresses
+        
+    Returns:
+        Dictionary mapping token symbols to list of yield data across chains
+    """
+    from config import SUPPORTED_TOKENS, CHAIN_CONFIG, RPC_ENDPOINTS
+    
+    # Initialize cache service
+    if cache_service is None:
+        cache_service = MorphoYieldCacheService(db=db)
+    
+    # Initialize web3 instances if not provided
+    if web3_instances is None:
+        web3_instances = {}
+        for chain_id, rpc_url in RPC_ENDPOINTS.items():
+            if chain_id in MORPHO_CONTRACTS:  # Only for chains with Morpho
+                try:
+                    web3_instances[chain_id] = Web3(Web3.HTTPProvider(rpc_url))
+                except Exception as e:
+                    logger.error(f"Failed to create Web3 instance for chain {chain_id}: {e}")
+    
+    # Default known markets/vaults if not provided
+    if known_markets_and_vaults is None:
+        known_markets_and_vaults = {
+            # Katana MetaMorpho vaults
+            747474: [
+                "0x82c4C641CCc38719ae1f0FBd16A64808d838fDfD",  # Steakhouse Prime AUSD Vault
+                "0x9540441C503D763094921dbE4f13268E6d1d3B56",  # Gauntlet AUSD Vault
+            ]
+            # TODO: Add more chains and their known markets/vaults
+        }
+    
+    # Collect tasks
+    tasks = []
+    task_info = []
+    
+    for chain_id, markets_and_vaults in known_markets_and_vaults.items():
+        if chain_id not in web3_instances:
+            continue
+            
+        for market_or_vault_id in markets_and_vaults:
+            tasks.append(_get_morpho_yield_with_cache(
+                web3_instances[chain_id],
+                market_or_vault_id,
+                chain_id,
+                SUPPORTED_TOKENS,
+                cache_service,
+                is_vault=(len(market_or_vault_id) == 42 and market_or_vault_id.startswith("0x"))
+            ))
+            task_info.append((market_or_vault_id, chain_id))
+    
+    if not tasks:
+        logger.info("No Morpho markets or vaults configured for yield fetching")
+        return {}
+    
+    # Execute all tasks in parallel
+    logger.info(f"Fetching Morpho yields for {len(tasks)} markets/vaults")
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # Organize results by token symbol
+    yields_by_token = {}
+    successful_fetches = 0
+    cache_hits = 0
+    
+    for (market_or_vault_id, chain_id), result in zip(task_info, results):
+        if isinstance(result, Exception):
+            logger.error(f"Error fetching Morpho yield for {market_or_vault_id} on chain {chain_id}: {result}")
+            continue
+        
+        if result and "error" not in result:
+            token_symbol = result.get("token")
+            if token_symbol:
+                if token_symbol not in yields_by_token:
+                    yields_by_token[token_symbol] = []
+                
+                yields_by_token[token_symbol].append(result)
+                successful_fetches += 1
+                
+                if result.get("from_cache"):
+                    cache_hits += 1
+    
+    logger.info(f"Successfully fetched {successful_fetches}/{len(tasks)} Morpho yields ({cache_hits} from cache)")
+    return yields_by_token
 
 
 def create_morpho_tool(

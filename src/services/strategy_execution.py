@@ -8,7 +8,8 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional
 from tools.portfolio_tool import create_portfolio_tool
 from utils.defi_tools import create_defi_langchain_tools
-from utils.aave_yields_utils import get_simplified_aave_yields, get_available_tokens_and_chains
+from utils.aave_yields_utils import get_simplified_aave_yields, get_available_tokens_and_yield_assets
+from utils.morpho_yields_utils import get_simplified_morpho_yields
 from utils.ai_router_tools import create_tools_agent
 from utils.json_parser import extract_json_content
 from config import logger
@@ -57,10 +58,10 @@ class StrategyExecutor:
             "execution_mode": "You operate in one-shot execution mode - no conversation, no follow-up questions. You must complete the given task autonomously.",
             
             "core_capabilities": {
-                "yield_optimization": "Use provided yield data to execute deposits based on portfolio data",
-                "token_swapping": "Execute token swaps on Core chain via Akka Finance",
-                "lending_operations": "Supply or withdraw tokens on Aave/Colend",
-                "portfolio_rebalancing": "Analyze portfolio and execute rebalancing strategies"
+                "yield_optimization": "Use provided yield data from ALL protocols (Aave/Colend AND Morpho) to execute deposits to the highest yielding options",
+                "token_swapping": "Execute token swaps on Core chain via Akka Finance or Katana chain via Sushi",
+                "lending_operations": "Supply or withdraw tokens on Aave/Colend (Arbitrum/Core) or Morpho vaults (Katana)",
+                "portfolio_rebalancing": "Analyze portfolio and execute rebalancing strategies across all supported chains and protocols"
             },
             
             "available_tools": [
@@ -70,20 +71,29 @@ class StrategyExecutor:
                 },
                 {
                     "name": "aave_lending",
-                    "description": "Supply or withdraw tokens on lending protocols"
+                    "description": "Supply or withdraw tokens on Aave V3 (Arbitrum) or Colend (Core chain) lending protocols"
+                },
+                {
+                    "name": "morpho_lending",
+                    "description": "Supply or withdraw tokens on Morpho Blue markets or MetaMorpho vaults (Katana chain) for advanced yield opportunities"
                 },
                 {
                     "name": "akka_swap",
-                    "description": "Swap tokens on Core chain"
+                    "description": "Swap tokens using Akka Finance DEX aggregator on Core chain"
+                },
+                {
+                    "name": "sushi_swap",
+                    "description": "Swap tokens using Sushi router on Katana chain"
                 }
             ],
             
             "execution_guidelines": [
                 "Analyze the task and portfolio data to determine required actions",
                 "Execute all necessary steps to complete the task",
-                "Use the yield data provided in context for lending decisions (no need to research current rates)",
-                "Calculate exact amounts for percentage-based requests",
-                "Chain multiple operations together as needed",
+                "Use the yield data provided in context for lending decisions - compare ALL protocols (Aave/Colend AND Morpho) to select the highest yield option",
+                "Calculate exact amounts for percentage-based requests based on current portfolio balances",
+                "Chain multiple operations together as needed (view portfolio → calculate amounts → swap if needed → deposit to best yield)",
+                "For Morpho vaults on Katana: use specific vault addresses (Steakhouse Prime: 0x82c4C641CCc38719ae1f0FBd16A64808d838fDfD, Gauntlet: 0x9540441C503D763094921dbE4f13268E6d1d3B56)",
                 "Complete the entire task without asking for clarification",
                 "Create a brief, user-friendly memo summarizing key actions and amounts for a notification"
             ],
@@ -116,13 +126,15 @@ class StrategyExecutor:
     
     async def _build_execution_context(self, task: str, portfolio_data: Dict[str, Any]) -> str:
         """Build context for execution including task and portfolio."""
-        # Get tokens and chains info
-        tokens_and_chains = get_available_tokens_and_chains()
-        available_tokens = tokens_and_chains["available_tokens"]
-        available_chains = tokens_and_chains["available_chains"]
+        # Get tokens, yield-bearing assets, and chains info
+        tokens_and_assets = get_available_tokens_and_yield_assets()
+        available_tokens = tokens_and_assets["available_tokens"]
+        yield_bearing_assets = tokens_and_assets["yield_bearing_assets"]
+        available_chains = tokens_and_assets["available_chains"]
         
-        # Get AAVE yields
+        # Get yields from both protocols
         aave_yields = await get_simplified_aave_yields()
+        morpho_yields = await get_simplified_morpho_yields()
         
         context_data = {
             "execution_task": {
@@ -138,18 +150,35 @@ class StrategyExecutor:
             
             "available_resources": {
                 "chains": available_chains,
-                "tokens_by_chain": available_tokens,
+                "base_tokens": available_tokens,
+                "yield_bearing_assets": yield_bearing_assets,
                 "current_yields": {
-                    "data": aave_yields,
-                    "instruction": "Use these pre-fetched yields for lending decisions - no need to research current rates"
+                    "aave_colend": {
+                        "description": "Current borrow APY rates for tokens on Aave/Colend",
+                        "data": aave_yields,
+                        "note": "Traditional lending yields on Aave V3 (Arbitrum) and Colend (Core)"
+                    },
+                    "morpho": {
+                        "description": "Current supply APY rates for tokens on Morpho markets and MetaMorpho vaults",
+                        "data": morpho_yields,
+                        "note": "Advanced lending yields through Morpho Blue protocol and managed MetaMorpho vaults"
+                    },
+                    "instruction": "CRITICAL: Compare ALL yield options across both Aave/Colend AND Morpho to select the highest APY for deposits. Use this pre-fetched data - no need to research current rates."
+                },
+                "morpho_vault_addresses": {
+                    "steakhouse_prime": "0x82c4C641CCc38719ae1f0FBd16A64808d838fDfD",
+                    "gauntlet": "0x9540441C503D763094921dbE4f13268E6d1d3B56",
+                    "note": "Use these exact addresses when depositing to Morpho vaults on Katana"
                 }
             },
             
             "execution_requirements": [
                 "Complete the entire task autonomously",
-                "Calculate exact amounts from portfolio percentages",
-                "Execute all necessary swaps and deposits",
-                "Return detailed execution report"
+                "Calculate exact amounts from portfolio percentages", 
+                "Compare yields across ALL protocols (Aave, Colend, AND Morpho) to find the best option",
+                "Execute all necessary swaps and deposits to achieve the highest yields",
+                "For yield optimization tasks, select the protocol/vault with the highest APY",
+                "Return detailed execution report with transaction hashes"
             ]
         }
         

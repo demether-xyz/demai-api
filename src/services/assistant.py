@@ -6,7 +6,8 @@ import json
 from datetime import datetime
 from typing import List, Dict, Any, Union
 from utils.defi_tools import create_defi_langchain_tools
-from utils.aave_yields_utils import get_simplified_aave_yields, get_available_tokens_and_chains
+from utils.aave_yields_utils import get_simplified_aave_yields, get_available_tokens_and_yield_assets
+from utils.morpho_yields_utils import get_simplified_morpho_yields
 from utils.ai_router_tools import create_tools_agent
 from langchain_core.messages import HumanMessage, AIMessage
 from utils.json_parser import extract_json_content
@@ -86,6 +87,10 @@ class SimpleAssistant:
                     "description": "Supply or withdraw tokens on Aave V3 (Arbitrum) or Colend (Core chain) lending protocols to earn yield or access liquidity"
                 },
                 {
+                    "name": "morpho_lending",
+                    "description": "Supply or withdraw tokens on Morpho Blue markets or MetaMorpho vaults (Katana chain) for advanced yield opportunities. Supports AUSD deposits into Steakhouse Prime and Gauntlet managed vaults"
+                },
+                {
                     "name": "akka_swap",
                     "description": "Swap tokens using Akka Finance DEX aggregator on Core chain for best execution prices"
                 }
@@ -101,18 +106,20 @@ class SimpleAssistant:
             
             "action_guidelines": [
                 "CRITICAL VERIFICATION: Before ANY deposit/lending operation, ALWAYS check portfolio balance first and verify the user has sufficient tokens. If the requested amount exceeds their balance, ask: 'I notice you want to deposit X TOKEN but you only have Y TOKEN available. Would you like to: 1) Deposit your full balance of Y TOKEN instead, or 2) Deposit a different amount?'",
-                "For yield optimization requests: First check portfolio, then use context yield data (not research) to identify best opportunities, calculate exact amounts, execute swaps if needed, then deposit",
+                "For yield optimization requests: First check portfolio, then use context yield data (not research) to compare ALL available options (Aave/Colend AND Morpho), identify best opportunities, calculate exact amounts, execute swaps if needed, then deposit to the highest yield protocol",
                 "For percentage-based requests: Calculate exact token amounts based on current portfolio balances",
-                "For 'best yield' requests: Use the current_aave_lending_rates in context to identify highest APY opportunities",
+                "For 'best yield' requests: Use the current_lending_rates in context to compare both Aave/Colend AND Morpho rates, then recommend the highest APY opportunity available",
+                "PROTOCOL SELECTION: When multiple yield options are available, always choose the highest APY option across all protocols (Aave, Colend, Morpho). Mention why you selected that specific protocol/vault",
                 "SAFETY CHECKS: Before executing potentially risky operations (depositing >80% of balance, swapping all tokens, withdrawing large amounts), confirm with user: 'This will [describe action]. Are you sure you want to proceed?'",
                 "Always develop a clear step-by-step plan before executing complex strategies",
                 "Research tool is for validation or additional info only - primary decisions should use context data",
-                "IMPORTANT: Cross-chain transfers are NOT supported. You can only: 1) Swap tokens on Core chain via Akka, 2) Lend on Arbitrum via Aave, 3) Lend on Core via Colend. To optimize yields across chains, work with existing balances on each chain"
+                "IMPORTANT: Cross-chain transfers are NOT supported. You can only: 1) Swap tokens on Core chain via Akka, 2) Lend on Arbitrum via Aave, 3) Lend on Core via Colend, 4) Lend on Katana via Morpho vaults. To optimize yields across chains, work with existing balances on each chain"
             ],
             
             "transaction_formatting": {
                 "Core": "When returning transaction hashes on Core chain, format as: https://scan.coredao.org/tx/{tx_hash}",
-                "Arbitrum": "When returning transaction hashes on Arbitrum, format as: https://arbiscan.io/tx/{tx_hash}"
+                "Arbitrum": "When returning transaction hashes on Arbitrum, format as: https://arbiscan.io/tx/{tx_hash}",
+                "Katana": "When returning transaction hashes on Katana chain, format as: https://katana-explorer.vercel.app/tx/{tx_hash}"
             },
             
             "response_format": {
@@ -139,13 +146,15 @@ class SimpleAssistant:
     
     async def _build_context_prompt(self, memory_data: dict = None) -> str:
         """Build a context prompt with current date and memory to append before user message."""
-        # Get tokens and chains info
-        tokens_and_chains = get_available_tokens_and_chains()
-        available_tokens = tokens_and_chains["available_tokens"]
-        available_chains = tokens_and_chains["available_chains"]
+        # Get tokens, yield-bearing assets, and chains info
+        tokens_and_assets = get_available_tokens_and_yield_assets()
+        available_tokens = tokens_and_assets["available_tokens"]
+        yield_bearing_assets = tokens_and_assets["yield_bearing_assets"]
+        available_chains = tokens_and_assets["available_chains"]
         
-        # Get simplified AAVE yields
+        # Get simplified AAVE and Morpho yields
         aave_yields = await get_simplified_aave_yields()
+        morpho_yields = await get_simplified_morpho_yields()
         
         context_data = {
             "current_context": {
@@ -154,15 +163,28 @@ class SimpleAssistant:
                 "user_memory": memory_data if memory_data else {"status": "No previous context stored"},
                 "available_defi_assets": {
                     "chains": available_chains,
-                    "tokens_by_chain": available_tokens,
+                    "base_tokens": available_tokens,
+                    "yield_bearing_assets": yield_bearing_assets,
+                    "asset_types_explanation": {
+                        "base_tokens": "Regular tokens that can be held, swapped, or deposited into yield strategies",
+                        "yield_bearing_assets": "Interest-bearing tokens from lending protocols (e.g., aTokens from Aave, Steakhouse vaults on Katana)"
+                    },
                     "aave_tool_info": "For Aave/Colend operations, use these exact chain names and token symbols",
                     "akka_tool_info": "Akka Finance DEX aggregator is currently only available on Core chain",
                     "cross_chain_note": "IMPORTANT: Cross-chain transfers are NOT supported. You must work with existing token balances on each chain. Swaps are only available on Core chain via Akka"
                 },
-                "current_aave_lending_rates": {
-                    "description": "Current borrow APY rates for tokens on Aave/Colend - USE THIS DATA for yield decisions",
-                    "yields": aave_yields,
-                    "note": "This is your PRIMARY source for yield optimization. When users ask about best yields or where to deposit, use these rates directly without needing research tool"
+                "current_lending_rates": {
+                    "aave_colend": {
+                        "description": "Current borrow APY rates for tokens on Aave/Colend - USE THIS DATA for yield decisions",
+                        "yields": aave_yields,
+                        "note": "Traditional lending yields on Aave V3 (Arbitrum) and Colend (Core)"
+                    },
+                    "morpho": {
+                        "description": "Current supply APY rates for tokens on Morpho markets and MetaMorpho vaults",
+                        "yields": morpho_yields,
+                        "note": "Advanced lending yields through Morpho Blue protocol and managed MetaMorpho vaults"
+                    },
+                    "usage_note": "This is your PRIMARY source for yield optimization. When users ask about best yields or where to deposit, compare both Aave/Colend and Morpho rates to recommend the highest yield option"
                 }
             }
         }

@@ -47,6 +47,7 @@
       "Read(/Users/jdorado/dev/demether/demai-app/src/services/**)",
       "Read(/Users/jdorado/dev/demether/demai-app/docs/**)",
       "Read(/Users/jdorado/dev/demether/demai-app/docs/**)",
+      "Read(/Users/jdorado/dev/demether/demai-app/docs/**)",
       "Read(/Users/jdorado/dev/demether/demai-app/docs/**)"
     ],
     "deny": []

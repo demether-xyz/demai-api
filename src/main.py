@@ -13,6 +13,7 @@ from services.portfolio_data_handler import PortfolioDataHandler
 from services.task_manager import TaskManager
 from services.strategies import get_all_strategies
 from utils.aave_yields_utils import get_simplified_aave_yields
+from utils.morpho_yields_utils import get_simplified_morpho_yields
 from services.task_executor import TaskExecutor
 from utils.telegram_helper import TelegramHelper
 from models.telegram_binding import TelegramBinding
@@ -260,31 +261,64 @@ async def list_strategies():
     """List all available strategies with current yield information"""
     strategies = get_all_strategies()
     
-    # Get current yields
+    # Get current yields from both protocols
     try:
-        yields = await get_simplified_aave_yields()
+        aave_yields = await get_simplified_aave_yields()
+        morpho_yields = await get_simplified_morpho_yields()
         
-        # Create a lookup map for yields by token and chain
+        # Create a lookup map for yields by token, chain, and protocol
         yield_map = {}
-        for yield_data in yields:
-            key = f"{yield_data['token']}_{yield_data['chain']}"
-            yield_map[key] = yield_data['borrow_apy']
         
-        # Enhance strategies with yield information
+        # Add Aave/Colend yields
+        for yield_data in aave_yields:
+            key = f"{yield_data['token']}_{yield_data['chain']}"
+            yield_map[key] = {
+                'apy': yield_data['borrow_apy'],
+                'protocol': 'Aave/Colend'
+            }
+        
+        # Add Morpho yields (prefer Morpho if higher APY)
+        for yield_data in morpho_yields:
+            key = f"{yield_data['token']}_{yield_data['chain']}"
+            morpho_apy = yield_data['supply_apy']
+            
+            # If this token/chain combo doesn't exist or Morpho has higher yield, use Morpho
+            if key not in yield_map or morpho_apy > yield_map[key]['apy']:
+                yield_map[key] = {
+                    'apy': morpho_apy,
+                    'protocol': yield_data.get('protocol', 'Morpho'),
+                    'vault_address': yield_data.get('market_or_vault_id')
+                }
+        
+        # Enhance strategies with best yield information
         for strategy in strategies:
             strategy['current_yields'] = {}
+            strategy['best_protocols'] = {}
+            
             for token in strategy.get('tokens', []):
                 key = f"{token}_{strategy['chain']}"
                 if key in yield_map:
-                    strategy['current_yields'][token] = yield_map[key]
+                    strategy['current_yields'][token] = yield_map[key]['apy']
+                    strategy['best_protocols'][token] = {
+                        'protocol': yield_map[key]['protocol'],
+                        'apy': yield_map[key]['apy']
+                    }
+                    # Add vault address if it's a Morpho vault
+                    if 'vault_address' in yield_map[key]:
+                        strategy['best_protocols'][token]['vault_address'] = yield_map[key]['vault_address']
                 else:
                     strategy['current_yields'][token] = 0.0
+                    strategy['best_protocols'][token] = {
+                        'protocol': 'Unknown',
+                        'apy': 0.0
+                    }
                     
     except Exception as e:
         logger.warning(f"Failed to fetch yields for strategies: {e}")
         # Add empty yields if fetch fails
         for strategy in strategies:
             strategy['current_yields'] = {token: 0.0 for token in strategy.get('tokens', [])}
+            strategy['best_protocols'] = {token: {'protocol': 'Unknown', 'apy': 0.0} for token in strategy.get('tokens', [])}
     
     return {"strategies": strategies}
 

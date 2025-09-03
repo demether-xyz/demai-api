@@ -15,6 +15,28 @@ STRATEGIES: Dict[str, Dict[str, Any]] = {
         "chain": "Core",
         "tokens": ["USDT", "USDC"],
         "protocols": ["Colend"]  # Colend for lendings
+    },
+    "katana_ausd_morpho_optimizer": {
+        "id": "katana_ausd_morpho_optimizer",
+        "name": "Katana AUSD Morpho Yield Optimizer",
+        "description": "Optimizes AUSD yield between Steakhouse Prime and Gauntlet MetaMorpho vaults on Katana chain",
+        "task": "Compare yields between Steakhouse Prime AUSD Vault (0x82c4C641CCc38719ae1f0FBd16A64808d838fDfD) and Gauntlet AUSD Vault (0x9540441C503D763094921dbE4f13268E6d1d3B56) on Katana, then move {percentage}% of AUSD funds to the highest yielding MetaMorpho vault",
+        "frequency": "daily",
+        "chain": "Katana",
+        "tokens": ["AUSD"],
+        "protocols": ["Morpho"],  # Morpho MetaMorpho vaults
+        "vaults": [
+            {
+                "name": "Steakhouse Prime AUSD Vault",
+                "address": "0x82c4C641CCc38719ae1f0FBd16A64808d838fDfD",
+                "description": "Steakhouse Prime managed AUSD vault"
+            },
+            {
+                "name": "Gauntlet AUSD Vault", 
+                "address": "0x9540441C503D763094921dbE4f13268E6d1d3B56",
+                "description": "Gauntlet managed AUSD vault"
+            }
+        ]
     }
 }
 

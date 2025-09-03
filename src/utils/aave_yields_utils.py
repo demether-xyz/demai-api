@@ -64,3 +64,79 @@ def get_available_tokens_and_chains() -> Dict[str, Any]:
         "available_tokens": available_tokens,
         "available_chains": available_chains
     }
+
+
+def get_available_tokens_and_yield_assets() -> Dict[str, Any]:
+    """Get available tokens, yield-bearing assets, and chains from config.
+    
+    Returns:
+        Dict with available_tokens, yield_bearing_assets, and available_chains
+    """
+    from config import SUPPORTED_TOKENS, CHAIN_CONFIG
+    
+    # Extract available tokens and their chains
+    available_tokens = {}
+    yield_bearing_assets = {}
+    
+    for token_symbol, token_info in SUPPORTED_TOKENS.items():
+        # Get regular token chains
+        chains = []
+        for chain_id in token_info.get("addresses", {}):
+            if chain_id in CHAIN_CONFIG:
+                chains.append(CHAIN_CONFIG[chain_id]["name"])
+        if chains:
+            available_tokens[token_symbol] = chains
+        
+        # Get yield-bearing assets (aTokens/vault tokens)
+        if "aave_atokens" in token_info:
+            for chain_id, atoken_config in token_info["aave_atokens"].items():
+                if chain_id not in CHAIN_CONFIG:
+                    continue
+                    
+                chain_name = CHAIN_CONFIG[chain_id]["name"]
+                
+                # Handle both single aToken and multiple aTokens (array format)
+                if isinstance(atoken_config, list):
+                    # Multiple yield assets (new array format like Katana vaults)
+                    for atoken_data in atoken_config:
+                        asset_name = atoken_data.get("name")
+                        if asset_name:
+                            if asset_name not in yield_bearing_assets:
+                                yield_bearing_assets[asset_name] = []
+                            if chain_name not in yield_bearing_assets[asset_name]:
+                                yield_bearing_assets[asset_name].append(chain_name)
+                elif isinstance(atoken_config, str):
+                    # Legacy single aToken (string address)
+                    # Determine protocol based on chain
+                    if chain_id == 747474:  # Katana
+                        asset_name = f"Steakhouse High Yield {token_symbol}"
+                    else:
+                        asset_name = f"a{token_symbol}"
+                    
+                    if asset_name not in yield_bearing_assets:
+                        yield_bearing_assets[asset_name] = []
+                    if chain_name not in yield_bearing_assets[asset_name]:
+                        yield_bearing_assets[asset_name].append(chain_name)
+                else:
+                    # Single aToken (dict format)
+                    asset_name = atoken_config.get("name")
+                    if not asset_name:
+                        # Fallback naming based on chain
+                        if chain_id == 747474:  # Katana
+                            asset_name = f"Steakhouse High Yield {token_symbol}"
+                        else:
+                            asset_name = f"a{token_symbol}"
+                    
+                    if asset_name not in yield_bearing_assets:
+                        yield_bearing_assets[asset_name] = []
+                    if chain_name not in yield_bearing_assets[asset_name]:
+                        yield_bearing_assets[asset_name].append(chain_name)
+    
+    # Extract available chains
+    available_chains = [config["name"] for config in CHAIN_CONFIG.values()]
+    
+    return {
+        "available_tokens": available_tokens,
+        "yield_bearing_assets": yield_bearing_assets,
+        "available_chains": available_chains
+    }

@@ -10,6 +10,7 @@ from tools.research_tool import create_research_tool
 from tools.aave_tool import create_aave_tool
 from tools.akka_tool import create_swap_tool
 from tools.sushi_tool import create_sushi_tool
+from tools.morpho_tool import create_morpho_tool
 from config import logger
 
 
@@ -44,6 +45,14 @@ class SushiSwapInput(BaseModel):
     src_token: str = Field(description="The source token symbol to swap from")
     dst_token: str = Field(description="The destination token symbol to swap to")
     amount: float = Field(description="The amount of source token to swap")
+
+
+class MorphoLendingInput(BaseModel):
+    chain_name: str = Field(description="The blockchain network - currently 'Katana' for MetaMorpho vaults")
+    token_symbol: str = Field(description="The token symbol (e.g., 'AUSD')")
+    amount: float = Field(description="The amount to supply or withdraw")
+    action: str = Field(description="The operation - 'supply' or 'withdraw'")
+    market_id: str = Field(description="Morpho market ID (bytes32 hex) or MetaMorpho vault address (e.g., '0x82c4C641CCc38719ae1f0FBd16A64808d838fDfD' for Steakhouse, '0x9540441C503D763094921dbE4f13268E6d1d3B56' for Gauntlet)")
 
 
 def create_defi_langchain_tools(vault_address: str, include_portfolio: bool = True) -> List[StructuredTool]:
@@ -112,6 +121,17 @@ def create_defi_langchain_tools(vault_address: str, include_portfolio: bool = Tr
         name="sushi_swap",
         description="Swap tokens using Sushi router on Katana. Use for swaps, exchanges, or trades on Katana.",
         args_schema=SushiSwapInput
+    ))
+    
+    # Morpho tool
+    morpho_config = create_morpho_tool(vault_address=vault_address)
+    morpho_func = morpho_config["tool"]
+    
+    tools.append(create_langchain_tool(
+        func=morpho_func,
+        name="morpho_lending",
+        description="Supply or withdraw tokens on Morpho Blue markets or MetaMorpho vaults. Supports both direct Morpho markets and managed MetaMorpho vaults (Steakhouse Prime, Gauntlet) on Katana for advanced yield opportunities.",
+        args_schema=MorphoLendingInput
     ))
     
     logger.info(f"Created {len(tools)} DeFi tools for vault {vault_address}")
